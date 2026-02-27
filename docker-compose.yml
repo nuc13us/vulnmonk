@@ -1,0 +1,37 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: vulnmonk-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: ./backend/.env
+        required: false        # skip gracefully if file doesn't exist
+    environment:
+      - DATABASE_PATH=/data/vulnmonk.db
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me-in-production}
+      - JWT_EXPIRE_DAYS=${JWT_EXPIRE_DAYS:-30}
+    volumes:
+      - vulnmonk-data:/data          # SQLite database
+      - vulnmonk-projects:/app/projects  # Cloned repos
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        # Must be reachable from the user's browser, not inside Docker network
+        REACT_APP_API_BASE_URL: ${REACT_APP_API_BASE_URL:-http://localhost:8000}
+    container_name: vulnmonk-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  vulnmonk-data:
+  vulnmonk-projects:

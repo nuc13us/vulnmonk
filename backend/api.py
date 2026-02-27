@@ -20,6 +20,9 @@ os.makedirs(PROJECTS_ROOT, exist_ok=True)
 
 router = APIRouter()
 
+# In-memory set of project IDs currently being scanned
+scanning_projects: set[int] = set()
+
 # ==================== HELPER FUNCTIONS ====================
 
 def validate_yaml_content(yaml_content: str) -> bool:
@@ -301,6 +304,19 @@ def read_project(
     return schemas.Project.from_orm(project)
 
 
+# Scan status endpoint (any authenticated user)
+@router.get("/projects/{project_id}/scan/status")
+def get_scan_status(
+    project_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"scanning": project_id in scanning_projects}
+
+
 # Trigger OpenGrep scan for a project (Admin only)
 @router.post("/projects/{project_id}/scan/")
 def trigger_scan(
@@ -312,7 +328,10 @@ def trigger_scan(
     project = crud.get_project(db, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    
+    if project_id in scanning_projects:
+        raise HTTPException(status_code=409, detail="Scan already in progress for this project")
+
+    scanning_projects.add(project_id)
     # Generate temporary path for cloning
     repo_name = project.github_url.rstrip("/").split("/")[-1].replace(".git", "")
     unique_id = str(uuid.uuid4())[:8]
@@ -421,6 +440,7 @@ def trigger_scan(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
     finally:
+        scanning_projects.discard(project_id)
         # Clean up: Delete the cloned repository
         if os.path.exists(temp_path):
             import shutil
@@ -466,7 +486,7 @@ def run_opengrep_scan(local_path, exclude_rules_str, include_rules_yaml=None):
                     cmd += ["--config", f.name]
         
         cmd += [".", "--json"]
-        
+        print(f"Running command: {' '.join(cmd)} in {local_path}")
         result = subprocess.run(cmd, cwd=local_path, capture_output=True, text=True, check=True)
         
         # Clean up temporary config files if created

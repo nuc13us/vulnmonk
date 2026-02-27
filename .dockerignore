@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/build/
+
+# Node root
+node_modules/
+
+# Data / runtime
+vulnmonk.db
+projects/
+repos/
+
+# Git / IDE
+.git/
+.gitignore
+.vscode/
+.github/
+
+# Docker files (not needed inside image)
+Dockerfile*
+docker-compose.yml
+
+# Env files with secrets
+backend/.env
+.env
+
+# Misc
+*.md

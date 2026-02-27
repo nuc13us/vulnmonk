@@ -27,6 +27,45 @@ npm install
 npm start   # runs on http://localhost:3000
 ```
 
+## Docker
+
+```bash
+docker compose up --build
+```
+
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000/docs
+
+Data is persisted in Docker named volumes (`vulnmonk-data`, `vulnmonk-projects`).
+
+**`backend/.env`** is loaded automatically at runtime. Create it with:
+```
+JWT_SECRET_KEY=<random-secret>
+JWT_EXPIRE_DAYS=30
+CORS_ORIGINS=http://localhost:3000
+
+# GitHub OAuth (optional — needed for private repo access)
+GITHUB_CLIENT_ID=<your-github-oauth-app-client-id>
+GITHUB_CLIENT_SECRET=<your-github-oauth-app-client-secret>
+GITHUB_REDIRECT_URI=http://localhost:3000/integrations
+```
+
+Generate a secret key:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+For overriding the frontend API URL at build time:
+```
+REACT_APP_API_BASE_URL=http://<your-host>:8000
+```
+
+**CLI tools inside the container:**
+```bash
+docker exec -it vulnmonk-backend python add_user.py
+docker exec -it vulnmonk-backend python add_user.py --list
+```
+
 ## Default Credentials
 
 | Username | Password | Role  |
@@ -47,11 +86,6 @@ CORS_ORIGINS=http://localhost:3000
 **`frontend/.env`** _(optional)_
 ```
 REACT_APP_API_BASE_URL=http://127.0.0.1:8000
-```
-
-Generate a secret key:
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 ## User Management (CLI)

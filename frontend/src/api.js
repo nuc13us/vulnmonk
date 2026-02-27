@@ -205,6 +205,13 @@ export async function getScanDetail(scanId) {
   return res.json();
 }
 
+export async function getScanStatus(projectId) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/scan/status`, {
+    headers: getHeaders()
+  });
+  return res.json(); // { scanning: bool }
+}
+
 export async function triggerScan(projectId) {
   const res = await apiFetch(`${API_BASE}/projects/${projectId}/scan/`, {
     method: "POST",

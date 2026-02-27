@@ -76,7 +76,7 @@ function Integrations() {
     } finally {
       setLoading(false);
     }
-  }, [loadIntegrations]);
+  }, [loadIntegrations, navigate]);
 
   useEffect(() => {
     loadUser();
@@ -90,7 +90,7 @@ function Integrations() {
       // Clean up URL
       navigate('/integrations', { replace: true });
     }
-  }, [location, navigate, loadUser, loadIntegrations, handleOAuthCallback]);
+  }, [location.search, loadUser, loadIntegrations, handleOAuthCallback, navigate]);
 
   const handleConnectGitHub = async () => {
     try {

@@ -1,0 +1,37 @@
+FROM python:3.12-slim
+
+# System deps: git (for cloning repos) + curl (for opengrep download)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install OpenGrep binary (auto-detect arch: amd64 or arm64)
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+        OPENGREP_URL="https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_x86"; \
+    else \
+        OPENGREP_URL="https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_aarch64"; \
+    fi && \
+    curl -fsSL "$OPENGREP_URL" -o /usr/local/bin/opengrep && \
+    chmod +x /usr/local/bin/opengrep
+
+WORKDIR /app
+
+# Install Python dependencies
+COPY backend/requirements.txt backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+# Copy application code
+COPY backend/ backend/
+COPY add_user.py .
+COPY view_db.py .
+
+# Database and scanned repos live on a mounted volume
+ENV DATABASE_PATH=/data/vulnmonk.db
+
+# Create directories
+RUN mkdir -p /data /app/projects
+
+EXPOSE 8000
+
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

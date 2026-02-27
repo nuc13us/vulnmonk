@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from "react";
-import { getScans, getScanDetail, triggerScan, markFalsePositive } from "../api";
+import React, { useState, useEffect, useRef } from "react";
+import { getScans, getScanDetail, triggerScan, markFalsePositive, getScanStatus } from "../api";
 
 // Parse date string from backend (may be missing Z suffix) and format in user's local timezone
 function formatDate(dateStr) {
@@ -20,7 +20,36 @@ export default function ScanResults({ project, user }) {
   const [logs, setLogs] = useState([]);
   const [showFalsePositives, setShowFalsePositives] = useState(false);
   const [showLogs, setShowLogs] = useState(true);
-  
+  const pollRef = useRef(null);
+
+  // Poll server scan status so the banner shows even after re-navigation
+  useEffect(() => {
+    if (!project) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const { scanning: active } = await getScanStatus(project.id);
+        if (cancelled) return;
+        setScanning(active);
+        if (active) {
+          pollRef.current = setTimeout(poll, 5000);
+        } else {
+          // Scan just finished — refresh history
+          getScans(project.id).then(setScanHistory);
+        }
+      } catch {
+        // ignore transient errors
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(pollRef.current);
+    };
+  }, [project]);
+
   const isAdmin = user && user.role === "admin";
   
   // Filter states
@@ -61,6 +90,9 @@ export default function ScanResults({ project, user }) {
       ]);
     } finally {
       setScanning(false);
+      // Restart polling to pick up the new scan in history
+      clearTimeout(pollRef.current);
+      getScans(project.id).then(setScanHistory);
     }
   };
 
@@ -143,6 +175,17 @@ export default function ScanResults({ project, user }) {
       </div>
 
       <div className="project-controls">
+        {scanning && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '10px',
+            padding: '10px 16px', marginBottom: '12px',
+            background: '#eff6ff', border: '1px solid #bfdbfe',
+            borderRadius: '8px', color: '#1e40af', fontSize: '0.9rem', fontWeight: 500
+          }}>
+            <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
+            Scan in progress — this may take a few minutes...
+          </div>
+        )}
         <button 
           onClick={handleScan} 
           disabled={scanning || !isAdmin} 
