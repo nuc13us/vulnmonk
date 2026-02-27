@@ -44,7 +44,6 @@ export default function Configurations({ user }) {
     setTotalPages(data.total_pages || 1);
     setHasNextPage(data.has_next || false);
     setHasPrevPage(data.has_prev || false);
-    console.log(`[DEBUG] Configurations loaded page ${data.page}/${data.total_pages}: ${projectsList.length} projects (total: ${data.total})`);
   };
 
   const handleSearch = (query) => {

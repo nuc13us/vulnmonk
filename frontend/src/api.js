@@ -34,6 +34,17 @@ function getHeaders(includeAuth = true) {
   return headers;
 }
 
+// Central fetch wrapper — automatically handles 401 auth expiry
+async function apiFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    removeAuthToken();
+    window.dispatchEvent(new CustomEvent("auth:expired"));
+    throw new Error("Session expired. Please log in again.");
+  }
+  return res;
+}
+
 // ==================== AUTH ENDPOINTS ====================
 
 export async function login(username, password) {
@@ -58,7 +69,7 @@ export async function login(username, password) {
 }
 
 export async function getCurrentUser() {
-  const res = await fetch(`${API_BASE}/auth/me`, {
+  const res = await apiFetch(`${API_BASE}/auth/me`, {
     headers: getHeaders()
   });
   
@@ -70,7 +81,7 @@ export async function getCurrentUser() {
 }
 
 export async function changePassword(oldPassword, newPassword) {
-  const res = await fetch(`${API_BASE}/auth/change-password`, {
+  const res = await apiFetch(`${API_BASE}/auth/change-password`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({
@@ -90,14 +101,14 @@ export async function changePassword(oldPassword, newPassword) {
 // ==================== USER MANAGEMENT ENDPOINTS (ADMIN ONLY) ====================
 
 export async function getUsers() {
-  const res = await fetch(`${API_BASE}/users/`, {
+  const res = await apiFetch(`${API_BASE}/users/`, {
     headers: getHeaders()
   });
   return res.json();
 }
 
 export async function createUser(username, password, role) {
-  const res = await fetch(`${API_BASE}/users/`, {
+  const res = await apiFetch(`${API_BASE}/users/`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ username, password, role })
@@ -112,7 +123,7 @@ export async function createUser(username, password, role) {
 }
 
 export async function updateUserRole(userId, role, isActive) {
-  const res = await fetch(`${API_BASE}/users/${userId}/role`, {
+  const res = await apiFetch(`${API_BASE}/users/${userId}/role`, {
     method: "PUT",
     headers: getHeaders(),
     body: JSON.stringify({ role, is_active: isActive })
@@ -134,30 +145,35 @@ export async function getProjects(page = 1, perPage = 100, search = "") {
     url += `&search=${encodeURIComponent(search.trim())}`;
   }
   
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     headers: getHeaders()
   });
   const data = await res.json();
-  console.log(`[DEBUG] Fetched page ${data.page}/${data.total_pages}: ${data.projects?.length} projects (total: ${data.total}${search ? `, search: "${search}"` : ''})`);
   return data;
+}
+
+export async function getProjectById(projectId) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) {
+    throw new Error("Project not found");
+  }
+  return res.json();
 }
 
 export async function addGithubProject(github_url) {
   const headers = getHeaders();
-  console.log("[DEBUG] addGithubProject headers:", headers);
-  console.log("[DEBUG] Auth token:", getAuthToken());
   
-  const res = await fetch(`${API_BASE}/projects/github/`, {
+  const res = await apiFetch(`${API_BASE}/projects/github/`, {
     method: "POST",
     headers: headers,
     body: JSON.stringify({ github_url })
   });
   
-  console.log("[DEBUG] Response status:", res.status);
   
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({ detail: "Unknown error" }));
-    console.error("[DEBUG] Error response:", errorData);
     throw new Error(errorData.detail || `Error: ${res.status}`);
   }
   
@@ -165,7 +181,7 @@ export async function addGithubProject(github_url) {
 }
 
 export async function updateExcludeRules(projectId, rules) {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/exclude_rules/`, {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/exclude_rules/`, {
     method: "PUT",
     headers: getHeaders(),
     body: JSON.stringify(rules)
@@ -176,31 +192,35 @@ export async function updateExcludeRules(projectId, rules) {
 // ==================== SCAN ENDPOINTS ====================
 
 export async function getScans(projectId) {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/scans/`, {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/scans/`, {
     headers: getHeaders()
   });
   return res.json();
 }
 
 export async function getScanDetail(scanId) {
-  const res = await fetch(`${API_BASE}/scans/${scanId}/`, {
+  const res = await apiFetch(`${API_BASE}/scans/${scanId}/`, {
     headers: getHeaders()
   });
   return res.json();
 }
 
 export async function triggerScan(projectId) {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/scan/`, {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/scan/`, {
     method: "POST",
     headers: getHeaders()
   });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ detail: "Scan failed" }));
+    throw new Error(errorData.detail || `Scan failed with status ${res.status}`);
+  }
   return res.json();
 }
 
 // ==================== FALSE POSITIVE ENDPOINTS ====================
 
 export async function markFalsePositive(projectId, uniqueKey) {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/false-positives/`, {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/false-positives/`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ unique_key: uniqueKey })
@@ -209,14 +229,14 @@ export async function markFalsePositive(projectId, uniqueKey) {
 }
 
 export async function getFalsePositives(projectId) {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/false-positives/`, {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/false-positives/`, {
     headers: getHeaders()
   });
   return res.json();
 }
 
 export async function unmarkFalsePositive(projectId, uniqueKey) {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/false-positives/${encodeURIComponent(uniqueKey)}`, {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/false-positives/${encodeURIComponent(uniqueKey)}`, {
     method: "DELETE",
     headers: getHeaders()
   });
@@ -226,7 +246,7 @@ export async function unmarkFalsePositive(projectId, uniqueKey) {
 // ==================== INCLUDE RULES ENDPOINTS ====================
 
 export async function updateIncludeRules(projectId, yamlContent, applyGlobalInclude) {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/include_rules/`, {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/include_rules/`, {
     method: "PUT",
     headers: getHeaders(),
     body: JSON.stringify({ 
@@ -244,7 +264,7 @@ export async function updateIncludeRules(projectId, yamlContent, applyGlobalIncl
 }
 
 export async function updateGlobalPreferences(projectId, applyGlobalExclude, applyGlobalInclude) {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/global_preferences/`, {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/global_preferences/`, {
     method: "PUT",
     headers: getHeaders(),
     body: JSON.stringify({ 
@@ -264,14 +284,14 @@ export async function updateGlobalPreferences(projectId, applyGlobalExclude, app
 // ==================== GLOBAL CONFIGURATION ENDPOINTS ====================
 
 export async function getGlobalConfig(key) {
-  const res = await fetch(`${API_BASE}/configurations/global/${key}`, {
+  const res = await apiFetch(`${API_BASE}/configurations/global/${key}`, {
     headers: getHeaders()
   });
   return res.json();
 }
 
 export async function updateGlobalConfig(key, value) {
-  const res = await fetch(`${API_BASE}/configurations/global/${key}`, {
+  const res = await apiFetch(`${API_BASE}/configurations/global/${key}`, {
     method: "PUT",
     headers: getHeaders(),
     body: JSON.stringify({ value })
@@ -286,7 +306,7 @@ export async function updateGlobalConfig(key, value) {
 }
 
 export async function getAllGlobalConfigs() {
-  const res = await fetch(`${API_BASE}/configurations/global`, {
+  const res = await apiFetch(`${API_BASE}/configurations/global`, {
     headers: getHeaders()
   });
   return res.json();
@@ -295,7 +315,7 @@ export async function getAllGlobalConfigs() {
 // ==================== GITHUB INTEGRATION ENDPOINTS ====================
 
 export async function getGitHubAuthUrl() {
-  const res = await fetch(`${API_BASE}/integrations/github/auth-url`, {
+  const res = await apiFetch(`${API_BASE}/integrations/github/auth-url`, {
     headers: getHeaders()
   });
   
@@ -308,7 +328,7 @@ export async function getGitHubAuthUrl() {
 }
 
 export async function handleGitHubCallback(code) {
-  const res = await fetch(`${API_BASE}/integrations/github/callback`, {
+  const res = await apiFetch(`${API_BASE}/integrations/github/callback`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ code: code })
@@ -323,7 +343,7 @@ export async function handleGitHubCallback(code) {
 }
 
 export async function getGitHubIntegrations() {
-  const res = await fetch(`${API_BASE}/integrations/github`, {
+  const res = await apiFetch(`${API_BASE}/integrations/github`, {
     headers: getHeaders()
   });
   
@@ -336,7 +356,7 @@ export async function getGitHubIntegrations() {
 }
 
 export async function createGitHubIntegration(integrationData) {
-  const res = await fetch(`${API_BASE}/integrations/github`, {
+  const res = await apiFetch(`${API_BASE}/integrations/github`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(integrationData)
@@ -351,7 +371,7 @@ export async function createGitHubIntegration(integrationData) {
 }
 
 export async function deleteGitHubIntegration(integrationId) {
-  const res = await fetch(`${API_BASE}/integrations/github/${integrationId}`, {
+  const res = await apiFetch(`${API_BASE}/integrations/github/${integrationId}`, {
     method: "DELETE",
     headers: getHeaders()
   });
@@ -365,7 +385,7 @@ export async function deleteGitHubIntegration(integrationId) {
 }
 
 export async function getGitHubRepositories(integrationId, page = 1, perPage = 100) {
-  const res = await fetch(`${API_BASE}/integrations/github/${integrationId}/repositories?page=${page}&per_page=${perPage}`, {
+  const res = await apiFetch(`${API_BASE}/integrations/github/${integrationId}/repositories?page=${page}&per_page=${perPage}`, {
     headers: getHeaders()
   });
   
@@ -375,12 +395,11 @@ export async function getGitHubRepositories(integrationId, page = 1, perPage = 1
   }
   
   const data = await res.json();
-  console.log(`[DEBUG] Received page ${data.page}/${data.total_pages}: ${data.repositories.length} repos (total: ${data.total})`);
   return data;
 }
 
 export async function importGitHubProjects(integrationId, repoUrls) {
-  const res = await fetch(`${API_BASE}/integrations/github/${integrationId}/import-projects`, {
+  const res = await apiFetch(`${API_BASE}/integrations/github/${integrationId}/import-projects`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(repoUrls)

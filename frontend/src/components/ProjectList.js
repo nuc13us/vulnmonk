@@ -10,7 +10,6 @@ export default function ProjectList({ onSelect }) {
     getProjects().then(data => {
       const projectsList = data.projects || data;
       setProjects(projectsList);
-      console.log(`[DEBUG] Loaded ${projectsList.length} projects (total: ${data.total || projectsList.length})`);
     });
   }, []);
 

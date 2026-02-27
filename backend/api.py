@@ -288,6 +288,19 @@ def read_projects(
     }
 
 
+@router.get("/projects/{project_id}")
+def read_project(
+    project_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a single project by ID."""
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return schemas.Project.from_orm(project)
+
+
 # Trigger OpenGrep scan for a project (Admin only)
 @router.post("/projects/{project_id}/scan/")
 def trigger_scan(
@@ -307,7 +320,6 @@ def trigger_scan(
     
     try:
         # Clone the repository (with authentication if integration is linked)
-        print(f"[DEBUG] Cloning repository: {project.github_url} to {temp_path}")
         
         clone_url = project.github_url
         
@@ -322,13 +334,6 @@ def trigger_scan(
                         "https://github.com/",
                         f"https://{integration.access_token}@github.com/"
                     )
-                    print(f"[DEBUG] Using authenticated clone for private repository access")
-                else:
-                    print(f"[DEBUG] Non-HTTPS URL, falling back to unauthenticated clone")
-            else:
-                print(f"[DEBUG] Integration not found or missing token, using unauthenticated clone")
-        else:
-            print(f"[DEBUG] No integration linked, using unauthenticated clone (public repos only)")
         
         subprocess.run(["git", "clone", "--depth", "1", clone_url, temp_path], 
                       check=True, capture_output=True, text=True)
@@ -377,12 +382,16 @@ def trigger_scan(
                 merged_files = global_yaml_files + project_yaml_files
                 include_rules_yaml = json.dumps(merged_files)
             except Exception as e:
-                print(f"[WARNING] Failed to merge include rules: {e}")
-                # In case of error, keep project-specific rules only
+                        # In case of error, keep project-specific rules only
                 pass
         
         # Run the scan
         scan_result = run_opengrep_scan(temp_path, exclude_rules, include_rules_yaml)
+
+        # If opengrep returned an error dict, surface it immediately
+        if isinstance(scan_result, dict) and "error" in scan_result:
+            raise HTTPException(status_code=500, detail=f"OpenGrep scan failed: {scan_result['error']}")
+
         # Add unique_key to all findings but DON'T filter yet (filtering happens on retrieval)
         if scan_result and isinstance(scan_result, dict):
             results = scan_result.get("results", [])
@@ -414,7 +423,6 @@ def trigger_scan(
     finally:
         # Clean up: Delete the cloned repository
         if os.path.exists(temp_path):
-            print(f"[DEBUG] Cleaning up temporary repository: {temp_path}")
             import shutil
             shutil.rmtree(temp_path, ignore_errors=True)
 
@@ -459,7 +467,6 @@ def run_opengrep_scan(local_path, exclude_rules_str, include_rules_yaml=None):
         
         cmd += [".", "--json"]
         
-        print(f"[DEBUG] Running opengrep command: {' '.join(cmd)}")
         result = subprocess.run(cmd, cwd=local_path, capture_output=True, text=True, check=True)
         
         # Clean up temporary config files if created
@@ -503,9 +510,6 @@ def process_scan_findings(scan_result, project_id, db):
     false_positives = crud.get_false_positives(db, project_id)
     fp_keys = {fp.unique_key for fp in false_positives}
     
-    print(f"[DEBUG] Processing scan for project {project_id}")
-    print(f"[DEBUG] Found {len(false_positives)} false positive markers")
-    print(f"[DEBUG] False positive keys: {fp_keys}")
     
     # Process findings
     processed_results = []
@@ -521,14 +525,12 @@ def process_scan_findings(scan_result, project_id, db):
             finding["unique_key"] = unique_key
             finding["status"] = "false_positive"
             filtered_fps.append(finding)
-            print(f"[DEBUG] Filtered as FP: {unique_key}")
         else:
             # Add to results with open status
             finding["unique_key"] = unique_key
             finding["status"] = "open"
             processed_results.append(finding)
     
-    print(f"[DEBUG] Processed: {len(processed_results)} open, {len(filtered_fps)} false positives")
     
     scan_result["results"] = processed_results
     scan_result["false_positives"] = filtered_fps
@@ -617,9 +619,7 @@ def mark_false_positive(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
-    print(f"[DEBUG] Marking as false positive - Project: {project_id}, Unique Key: {unique_key}")
     fp = crud.create_false_positive(db, project_id, unique_key)
-    print(f"[DEBUG] False positive created with ID: {fp.id}")
     
     return {"success": True, "false_positive_id": fp.id, "unique_key": unique_key}
 
@@ -741,9 +741,6 @@ def github_oauth_callback(
     try:
         import requests
         
-        print(f"[DEBUG] GitHub OAuth callback - Code received: {code[:10]}...")
-        print(f"[DEBUG] GitHub OAuth config - Client ID: {GITHUB_CLIENT_ID}")
-        print(f"[DEBUG] GitHub OAuth config - Redirect URI: {GITHUB_REDIRECT_URI}")
         
         # Exchange code for access token
         token_response = requests.post(
@@ -757,10 +754,8 @@ def github_oauth_callback(
             }
         )
         
-        print(f"[DEBUG] Token exchange status: {token_response.status_code}")
         
         if token_response.status_code != 200:
-            print(f"[ERROR] Token exchange failed: {token_response.text}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Failed to exchange code for access token: {token_response.text}"
@@ -769,12 +764,9 @@ def github_oauth_callback(
         token_data = token_response.json()
         access_token = token_data.get("access_token")
         
-        print(f"[DEBUG] Token exchange response: {token_data}")
-        print(f"[DEBUG] Access token received: {bool(access_token)}")
         
         if not access_token:
             error_msg = token_data.get('error_description', token_data.get('error', 'Unknown error'))
-            print(f"[ERROR] No access token in response: {error_msg}")
             raise HTTPException(
                 status_code=400,
                 detail=f"GitHub error: {error_msg}"
@@ -786,7 +778,6 @@ def github_oauth_callback(
             "Accept": "application/vnd.github.v3+json"
         }
         
-        print(f"[DEBUG] Fetching GitHub username from repositories...")
         
         # Get username from first repository
         repos_response = requests.get("https://api.github.com/user/repos?per_page=1", headers=headers)
@@ -796,23 +787,18 @@ def github_oauth_callback(
             repos = repos_response.json()
             if repos:
                 github_login = repos[0]["owner"]["login"]
-                print(f"[DEBUG] GitHub username extracted from repos: {github_login}")
-        
+                
         # If no repos found, try to get username from organizations membership
         if not github_login:
-            print(f"[DEBUG] No repos found, trying to get username from org membership...")
             org_memberships_response = requests.get("https://api.github.com/user/memberships/orgs", headers=headers)
             if org_memberships_response.status_code == 200:
                 memberships = org_memberships_response.json()
                 if memberships:
                     # Get username from organization URL
                     github_login = memberships[0]["user"]["login"]
-                    print(f"[DEBUG] GitHub username extracted from org membership: {github_login}")
-        
+                    
         # Get user's organizations
-        print(f"[DEBUG] Fetching GitHub organizations...")
         orgs_response = requests.get("https://api.github.com/user/orgs", headers=headers)
-        print(f"[DEBUG] Organizations response status: {orgs_response.status_code}")
         
         organizations = []
         if orgs_response.status_code == 200:
@@ -950,19 +936,14 @@ def get_github_repositories(
             repos_url = f"https://api.github.com/orgs/{org_name}/repos"
         
         # Fetch ALL repositories from GitHub first (to get accurate total count)
-        print(f"[DEBUG] Fetching all repositories from {repos_url}")
         github_page = 1
         
         while True:
-            print(f"[DEBUG] Fetching GitHub page {github_page} (per_page=100)")
             response = requests.get(repos_url, headers=headers, params={"per_page": 100, "page": github_page})
             if response.status_code == 200:
                 repos = response.json()
                 if not repos:
-                    print(f"[DEBUG] No more repos on GitHub page {github_page}")
                     break
-                
-                print(f"[DEBUG] Got {len(repos)} repos from GitHub page {github_page}")
                 
                 for repo in repos:
                     all_repos.append({
@@ -976,7 +957,6 @@ def get_github_repositories(
                     })
                 
                 if len(repos) < 100:
-                    print(f"[DEBUG] Got {len(repos)} repos (less than 100), last GitHub page")
                     break
                 github_page += 1
             else:
@@ -986,7 +966,6 @@ def get_github_repositories(
                 )
         
         total_repos = len(all_repos)
-        print(f"[DEBUG] Total repositories from GitHub: {total_repos}")
         
         # Now paginate for the client
         start_idx = (page - 1) * per_page
@@ -996,7 +975,6 @@ def get_github_repositories(
         has_next = end_idx < total_repos
         total_pages = (total_repos + per_page - 1) // per_page
         
-        print(f"[DEBUG] Returning page {page}/{total_pages}: {len(paginated_repos)} repos (total: {total_repos})")
         
         return {
             "repositories": paginated_repos,

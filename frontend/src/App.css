@@ -930,8 +930,8 @@ tr:nth-child(even) td {
 }
 
 .scan-history-section h3 {
-  margin: 0 0 20px 0 !important;
-  font-size: 1.3rem !important;
+  margin: 0 0 12px 0 !important;
+  font-size: 1.1rem !important;
   font-weight: 700 !important;
   color: #0f172a !important;
   display: flex;
@@ -1022,14 +1022,49 @@ tr:nth-child(even) td {
   font-weight: 700;
   color: #181c23;
 }
-.scan-history {
+.scan-history-compact {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   margin-bottom: 0;
-  max-height: 380px;
-  overflow-y: auto;
-  padding-right: 4px;
+}
+.scan-history-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-left: 3px solid transparent;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  color: #334155 !important;
+  font-size: 0.875rem;
+}
+.scan-history-row:hover {
+  background: #f1f5f9 !important;
+  border-color: #d1d5db;
+  border-left-color: #94a3b8;
+  color: #334155 !important;
+}
+.scan-history-row.active {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  border-left-color: #2563eb;
+}
+.scan-history-row-num {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  min-width: 22px;
+  font-weight: 500;
+}
+.scan-history-row-date {
+  flex: 1;
+  font-weight: 500;
+  color: #374151;
 }
 .scan-history-item {
   margin: 0;

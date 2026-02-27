@@ -2,6 +2,17 @@
 import React, { useState, useEffect } from "react";
 import { getScans, getScanDetail, triggerScan, markFalsePositive } from "../api";
 
+// Parse date string from backend (may be missing Z suffix) and format in user's local timezone
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  // Append 'Z' if no timezone info present so JS treats it as UTC
+  const iso = /[Zz]|[+-]\d{2}:?\d{2}$/.test(dateStr) ? dateStr : dateStr + 'Z';
+  return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
 export default function ScanResults({ project, user }) {
   const [scanHistory, setScanHistory] = useState([]);
   const [scanDetail, setScanDetail] = useState(null);
@@ -36,13 +47,21 @@ export default function ScanResults({ project, user }) {
       { type: 'info', msg: 'Scan started...' },
       ...l.slice(0, 4)
     ]);
-    await triggerScan(project.id);
-    setScanHistory(await getScans(project.id));
-    setScanning(false);
-    setLogs(l => [
-      { type: 'success', msg: 'Scan completed.' },
-      ...l.slice(0, 4)
-    ]);
+    try {
+      await triggerScan(project.id);
+      setScanHistory(await getScans(project.id));
+      setLogs(l => [
+        { type: 'success', msg: 'Scan completed.' },
+        ...l.slice(0, 4)
+      ]);
+    } catch (err) {
+      setLogs(l => [
+        { type: 'error', msg: `Scan failed: ${err.message}` },
+        ...l.slice(0, 4)
+      ]);
+    } finally {
+      setScanning(false);
+    }
   };
 
   const handleSelectScan = async (scan) => {
@@ -117,7 +136,7 @@ export default function ScanResults({ project, user }) {
               fontSize: '0.85rem', 
               color: '#94a3b8' 
             }}>
-              • Last scan: {new Date(scanHistory[0].scan_date).toLocaleString()}
+              • Last scan: {formatDate(scanHistory[0].scan_date)}
             </span>
           )}
         </div>
@@ -164,29 +183,23 @@ export default function ScanResults({ project, user }) {
       )}
 
       <div className="scan-history-section">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
           <h3 style={{ margin: 0 }}>Scan History</h3>
         </div>
         {scanHistory.length > 0 ? (
-        <>
-        <div className="scan-history">
-          {scanHistory.map(scan => (
-            <div key={scan.id} className="scan-history-item">
-              <button 
-                className="scan-history-button"
-                onClick={() => handleSelectScan(scan)}
-              >
-                <div className="scan-history-main">
-                  <div className="scan-history-date">{new Date(scan.scan_date).toLocaleString()}</div>
-                  <div className="scan-history-findings">
-                    <span className="finding-count">{scan.findings_count} findings</span>
-                  </div>
-                </div>
-              </button>
-            </div>
+        <div className="scan-history-compact">
+          {scanHistory.map((scan, idx) => (
+            <button
+              key={scan.id}
+              className={`scan-history-row${scanDetail && scanDetail.id === scan.id ? ' active' : ''}`}
+              onClick={() => handleSelectScan(scan)}
+            >
+              <span className="scan-history-row-num">#{idx + 1}</span>
+              <span className="scan-history-row-date">{formatDate(scan.scan_date)}</span>
+              <span className="finding-count">{scan.findings_count} findings</span>
+            </button>
           ))}
         </div>
-        </>
       ) : (
         <p className="empty-message">No scans yet. Click "Run Security Scan" to trigger a scan.</p>
       )}

@@ -55,9 +55,7 @@ function Integrations() {
     try {
       setLoading(true);
       addLog("info", "Completing GitHub authentication...");
-      console.log("OAuth code received:", code);
       const result = await handleGitHubCallback(code);
-      console.log("OAuth callback result:", result);
       addLog("success", result.message || "Connected to GitHub successfully");
       if (result.github_user) {
         addLog("info", `Authenticated as: ${result.github_user}`);
@@ -146,8 +144,6 @@ function Integrations() {
       setLoadingRepos(true);
       addLog("info", `Fetching repositories from ${integration.org_name}...`);
       const data = await getGitHubRepositories(integration.id, 1, 100);
-      console.log(`[DEBUG] Received ${data.repositories.length} repos in component`);
-      console.log(`[DEBUG] Total repos: ${data.total}, Has next: ${data.has_next}`);
       setRepositories(data.repositories);
       setTotalRepos(data.total);
       setHasNextPage(data.has_next);
@@ -168,7 +164,6 @@ function Integrations() {
       const nextPage = currentPage + 1;
       addLog("info", `Loading more repositories (page ${nextPage})...`);
       const data = await getGitHubRepositories(selectedIntegration.id, nextPage, 100);
-      console.log(`[DEBUG] Loaded page ${nextPage}: ${data.repositories.length} repos`);
       setRepositories(prev => [...prev, ...data.repositories]);
       setCurrentPage(nextPage);
       setHasNextPage(data.has_next);

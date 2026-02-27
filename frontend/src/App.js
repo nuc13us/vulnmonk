@@ -9,7 +9,7 @@ import Configurations from "./components/Configurations";
 import Integrations from "./components/Integrations";
 import Account from "./components/Account";
 import Users from "./components/Users";
-import { getProjects, getCurrentUser, isAuthenticated, removeAuthToken } from "./api";
+import { getProjects, getCurrentUser, isAuthenticated, removeAuthToken, getProjectById } from "./api";
 
 function App() {
   return (
@@ -41,6 +41,17 @@ function AppContent() {
     }
   }, [user]);
 
+  // Redirect to login when any API call receives a 401 (token expired)
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setUser(null);
+      setProjects([]);
+      navigate("/");
+    };
+    window.addEventListener("auth:expired", handleAuthExpired);
+    return () => window.removeEventListener("auth:expired", handleAuthExpired);
+  }, [navigate]);
+
   const checkAuth = async () => {
     if (isAuthenticated()) {
       try {
@@ -65,7 +76,6 @@ function AppContent() {
       setTotalPages(data.total_pages || 1);
       setHasNextPage(data.has_next || false);
       setHasPrevPage(data.has_prev || false);
-      console.log(`[DEBUG] App.js loaded page ${data.page}/${data.total_pages}: ${projectsList.length} projects (total: ${data.total})`);
     } catch (error) {
       console.error("Failed to load projects:", error);
     }
@@ -186,10 +196,6 @@ function AppContent() {
               <div className="user-role-sidebar">{user.role}</div>
             </div>
           </div>
-          <div className="status-indicator">
-            <span className="status-dot status-active"></span>
-            <span className="status-text">System Online</span>
-          </div>
           <button onClick={handleLogout} className="logout-button">
             🚪 Logout
           </button>
@@ -261,9 +267,33 @@ function AppContent() {
 // Wrapper component to extract project ID from URL params
 function ProjectDetailWrapper({ projects, user }) {
   const { id } = useParams();
-  const project = projects.find(p => p.id === parseInt(id));
-  
-  if (!project) {
+  const [project, setProject] = React.useState(() => projects.find(p => p.id === parseInt(id)) || null);
+  const [loading, setLoading] = React.useState(!project);
+  const [notFound, setNotFound] = React.useState(false);
+
+  React.useEffect(() => {
+    const fromList = projects.find(p => p.id === parseInt(id));
+    if (fromList) {
+      setProject(fromList);
+      setLoading(false);
+      return;
+    }
+    // Not in local list (direct URL, refresh, or paginated out) — fetch directly
+    setLoading(true);
+    getProjectById(parseInt(id))
+      .then(p => { setProject(p); setLoading(false); })
+      .catch(() => { setNotFound(true); setLoading(false); });
+  }, [id, projects]);
+
+  if (loading) {
+    return (
+      <div className="card">
+        <p style={{ color: "#64748b" }}>Loading project...</p>
+      </div>
+    );
+  }
+
+  if (notFound || !project) {
     return (
       <div className="card">
         <h2>Project Not Found</h2>
@@ -271,7 +301,7 @@ function ProjectDetailWrapper({ projects, user }) {
       </div>
     );
   }
-  
+
   return <ScanResults project={project} user={user} />;
 }
 
