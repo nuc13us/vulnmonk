@@ -44,7 +44,7 @@ JWT_SECRET_KEY=<random-secret>
 JWT_EXPIRE_DAYS=30
 CORS_ORIGINS=http://localhost:3000
 
-# GitHub OAuth (optional — needed for private repo access)
+# GitHub OAuth (optional — needed for github integration)
 GITHUB_CLIENT_ID=<your-github-oauth-app-client-id>
 GITHUB_CLIENT_SECRET=<your-github-oauth-app-client-secret>
 GITHUB_REDIRECT_URI=http://localhost:3000/integrations
@@ -64,28 +64,6 @@ REACT_APP_API_BASE_URL=http://<your-host>:8000
 ```bash
 docker exec -it vulnmonk-backend python add_user.py
 docker exec -it vulnmonk-backend python add_user.py --list
-```
-
-## Default Credentials
-
-| Username | Password | Role  |
-|----------|----------|-------|
-| admin    | admin    | Admin |
-
-> **Change the default password after first login.**
-
-## Environment Variables
-
-**`backend/.env`**
-```
-JWT_SECRET_KEY=<random-secret>
-JWT_EXPIRE_DAYS=30
-CORS_ORIGINS=http://localhost:3000
-```
-
-**`frontend/.env`** _(optional)_
-```
-REACT_APP_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 ## User Management (CLI)

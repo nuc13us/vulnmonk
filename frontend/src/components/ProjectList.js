@@ -34,7 +34,10 @@ export default function ProjectList({ onSelect }) {
           // Extract project name safely
           let repoName = 'Unnamed';
           if (p.github_url) {
-            repoName = p.github_url.split('/').filter(part => part).pop().replace('.git', '');
+            const parts = p.github_url.split('/').filter(part => part && !part.includes(':'));
+            repoName = parts.length >= 2
+              ? `${parts[parts.length - 2]}/${parts[parts.length - 1].replace('.git', '')}`
+              : parts[parts.length - 1]?.replace('.git', '') || 'Unnamed';
           } else if (p.local_path) {
             repoName = p.local_path.split('/').filter(part => part).pop();
           } else if (p.name) {

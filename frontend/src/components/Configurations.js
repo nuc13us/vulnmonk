@@ -405,10 +405,11 @@ export default function Configurations({ user }) {
             <>
               <div className="config-projects-grid">
                 {projects.map((project) => {
-                  // Extract project name safely
+                  // Extract project name as org/repo
                   let repoName = 'Unnamed';
                   if (project.github_url) {
-                    repoName = project.github_url.split('/').filter(part => part).pop().replace('.git', '');
+                    const parts = project.github_url.replace(/\.git$/, '').split('/').filter(s => s && !s.includes(':'));
+                    repoName = parts.slice(-2).join('/') || 'Unnamed';
                   } else if (project.local_path) {
                     repoName = project.local_path.split('/').filter(part => part).pop();
                   } else if (project.name) {
@@ -507,7 +508,7 @@ export default function Configurations({ user }) {
                 Rules Configuration
               </h3>
               <p style={{ color: "#64748b", marginBottom: "16px", fontSize: "0.9rem" }}>
-                Managing rules for: <strong>{selectedProject.github_url.replace(/\.git$/, "").split("/").filter(Boolean).pop()}</strong>
+                Managing rules for: <strong>{selectedProject.github_url.replace(/\.git$/, "").split("/").filter(s => s && !s.includes(':')).slice(-2).join('/')}</strong>
               </p>
 
               {message && (

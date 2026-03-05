@@ -26,25 +26,6 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     database.init_db()
-    _seed_default_admin()
-
-def _seed_default_admin():
-    """Create a default admin user if no users exist yet."""
-    from .database import SessionLocal
-    from . import models
-    from .auth import get_password_hash
-    db = SessionLocal()
-    try:
-        if db.query(models.User).count() == 0:
-            db.add(models.User(
-                username="admin",
-                hashed_password=get_password_hash("admin"),
-                role="admin",
-                is_active=True,
-            ))
-            db.commit()
-    finally:
-        db.close()
 
 app.include_router(api.router)
 

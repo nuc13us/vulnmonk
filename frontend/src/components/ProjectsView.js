@@ -132,10 +132,13 @@ function ProjectsView({
         ) : (
           <div className="projects-grid">
             {projects.map((project) => {
-              // Extract project name safely
+              // Extract project name safely as org/repo
               let repoName = 'Unnamed';
               if (project.github_url) {
-                repoName = project.github_url.split('/').filter(part => part).pop().replace('.git', '');
+                const parts = project.github_url.split('/').filter(part => part && !part.includes(':'));
+                repoName = parts.length >= 2
+                  ? `${parts[parts.length - 2]}/${parts[parts.length - 1].replace('.git', '')}`
+                  : parts[parts.length - 1]?.replace('.git', '') || 'Unnamed';
               } else if (project.local_path) {
                 repoName = project.local_path.split('/').filter(part => part).pop();
               } else if (project.name) {

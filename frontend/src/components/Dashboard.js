@@ -30,10 +30,11 @@ export default function Dashboard({ projects, totalProjects = 0, onSelectProject
             totalVulnerabilities += findingsCount;
             projectsWithScans.set(p.id, findingsCount);
             
-            // Extract project name safely
+            // Extract project name as org/repo
             let projectName = 'Unnamed';
             if (p.github_url) {
-              projectName = p.github_url.split('/').filter(part => part).pop().replace('.git', '');
+              const parts = p.github_url.replace(/\.git$/, '').split('/').filter(s => s && !s.includes(':'));
+              projectName = parts.slice(-2).join('/') || 'Unnamed';
             } else if (p.local_path) {
               projectName = p.local_path.split('/').filter(part => part).pop();
             } else if (p.name) {
@@ -138,10 +139,11 @@ export default function Dashboard({ projects, totalProjects = 0, onSelectProject
                 .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
                 .slice(0, 8)
                 .map(p => {
-                // Extract project name safely
+                // Extract project name as org/repo
                 let name = 'Unnamed';
                 if (p.github_url) {
-                  name = p.github_url.split('/').filter(part => part).pop().replace('.git', '');
+                  const parts = p.github_url.replace(/\.git$/, '').split('/').filter(s => s && !s.includes(':'));
+                  name = parts.slice(-2).join('/') || 'Unnamed';
                 } else if (p.local_path) {
                   name = p.local_path.split('/').filter(part => part).pop();
                 } else if (p.name) {

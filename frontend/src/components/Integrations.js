@@ -164,12 +164,44 @@ function Integrations() {
       const nextPage = currentPage + 1;
       addLog("info", `Loading more repositories (page ${nextPage})...`);
       const data = await getGitHubRepositories(selectedIntegration.id, nextPage, 100);
-      setRepositories(prev => [...prev, ...data.repositories]);
+      setRepositories(prev => {
+        const existingUrls = new Set(prev.map(r => r.html_url));
+        const unique = data.repositories.filter(r => !existingUrls.has(r.html_url));
+        return [...prev, ...unique];
+      });
       setCurrentPage(nextPage);
       setHasNextPage(data.has_next);
       addLog("success", `Loaded ${data.repositories.length} more repositories`);
     } catch (error) {
       addLog("error", "Failed to load more repositories: " + error.message);
+    } finally {
+      setLoadingRepos(false);
+    }
+  };
+
+  const handleLoadAll = async () => {
+    if (!selectedIntegration) return;
+    try {
+      setLoadingRepos(true);
+      addLog("info", "Loading all repositories...");
+      // Track pagination locally — React state is stale inside async loops
+      let page = currentPage + 1;
+      let hasMore = hasNextPage;
+      while (hasMore) {
+        const data = await getGitHubRepositories(selectedIntegration.id, page, 100);
+        setRepositories(prev => {
+          const existingUrls = new Set(prev.map(r => r.html_url));
+          const unique = data.repositories.filter(r => !existingUrls.has(r.html_url));
+          return [...prev, ...unique];
+        });
+        setCurrentPage(page);
+        setHasNextPage(data.has_next);
+        hasMore = data.has_next;
+        page++;
+      }
+      addLog("success", "All repositories loaded");
+    } catch (error) {
+      addLog("error", "Failed to load all repositories: " + error.message);
     } finally {
       setLoadingRepos(false);
     }
@@ -348,13 +380,7 @@ function Integrations() {
                     {hasNextPage && (
                       <button 
                         className="btn-secondary-small"
-                        onClick={async () => {
-                          addLog("info", "Loading all repositories...");
-                          while (hasNextPage) {
-                            await loadMoreRepositories();
-                          }
-                          addLog("success", "All repositories loaded");
-                        }}
+                        onClick={handleLoadAll}
                         disabled={loadingRepos}
                         style={{ marginRight: '10px' }}
                       >
@@ -419,7 +445,7 @@ function Integrations() {
                       <div className="repository-info">
                         <div className="repository-name">
                           <a href={repo.html_url} target="_blank" rel="noopener noreferrer">
-                            {repo.name}
+                            {repo.full_name}
                           </a>
                           {repo.language && (
                             <span className="badge badge-language">{repo.language}</span>

@@ -48,7 +48,7 @@ export default function Login({ onLoginSuccess }) {
             margin: 0,
             marginBottom: "8px"
           }}>
-            VulnMonk SAST
+            VulnMonk
           </h1>
           <p style={{ color: "#64748b", fontSize: "0.95rem", margin: 0 }}>
             Sign in to your account
@@ -96,6 +96,7 @@ export default function Login({ onLoginSuccess }) {
                 transition: "all 0.2s",
                 outline: "none",
                 boxSizing: "border-box",
+                marginLeft: 0,
                 WebkitAppearance: "none",
                 appearance: "none"
               }}

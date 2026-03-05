@@ -145,9 +145,10 @@ export default function ScanResults({ project, user }) {
     <div className="project-detail">
       <div style={{ marginBottom: '20px' }}>
         <h2 style={{ marginBottom: '8px' }}>{(() => {
-          // Extract project name safely
+          // Extract project name as org/repo
           if (project.github_url) {
-            return project.github_url.split('/').filter(part => part).pop().replace('.git', '');
+            const parts = project.github_url.replace(/\.git$/, '').split('/').filter(s => s && !s.includes(':'));
+            return parts.slice(-2).join('/') || 'Unnamed';
           } else if (project.local_path) {
             return project.local_path.split('/').filter(part => part).pop();
           } else if (project.name) {
