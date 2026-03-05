@@ -8,10 +8,10 @@ RUN npm ci --silent
 
 COPY frontend/ .
 
-# API base URL is baked in at build time.
-# Default works for local Docker (browser → localhost:8000).
-# Override with: --build-arg REACT_APP_API_BASE_URL=https://your-api.example.com
-ARG REACT_APP_API_BASE_URL=http://localhost:8000
+# API base URL can be overridden at build time.
+# Leave unset (default) to use "/api" via nginx reverse proxy — recommended for production.
+# Set to an absolute URL (e.g. https://api.example.com) only when running without Docker Compose.
+ARG REACT_APP_API_BASE_URL=
 ENV REACT_APP_API_BASE_URL=$REACT_APP_API_BASE_URL
 
 RUN npm run build

@@ -5,8 +5,10 @@ services:
       dockerfile: Dockerfile.backend
     container_name: vulnmonk-backend
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # Port 8000 is NOT exposed externally — nginx is the only entry point.
+    # Uncomment the line below only for local debugging without Docker Compose.
+    # ports:
+    #   - "8000:8000"
     env_file:
       - path: ./backend/.env
         required: false        # skip gracefully if file doesn't exist
@@ -14,6 +16,9 @@ services:
       - DATABASE_PATH=/data/vulnmonk.db
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me-in-production}
       - JWT_EXPIRE_DAYS=${JWT_EXPIRE_DAYS:-30}
+      # Behind nginx proxy: allow all origins (browser requests are same-origin via nginx).
+      # Override in backend/.env with specific origins for non-Docker setups.
+      - CORS_ORIGINS=*
     volumes:
       - vulnmonk-data:/data          # SQLite database
       - vulnmonk-projects:/app/projects  # Cloned repos
@@ -23,8 +28,9 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
       args:
-        # Must be reachable from the user's browser, not inside Docker network
-        REACT_APP_API_BASE_URL: ${REACT_APP_API_BASE_URL:-http://localhost:8000}
+        # Only set this to override the default ("/api" via nginx proxy).
+        # Example: REACT_APP_API_BASE_URL=https://api.example.com docker compose up --build
+        REACT_APP_API_BASE_URL: ${REACT_APP_API_BASE_URL:-}
     container_name: vulnmonk-frontend
     restart: unless-stopped
     ports:

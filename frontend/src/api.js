@@ -1,4 +1,7 @@
-const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://127.0.0.1:8000";
+// In Docker (production): REACT_APP_API_BASE_URL is empty/unset → falls back to "/api".
+// nginx proxies /api/* → backend:8000/* on the internal Docker network.
+// In local dev (npm start): setupProxy.js forwards /api/* → localhost:8000/* automatically.
+const API_BASE = process.env.REACT_APP_API_BASE_URL || "/api";
 
 // ==================== AUTH TOKEN MANAGEMENT ====================
 

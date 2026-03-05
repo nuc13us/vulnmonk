@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
 
@@ -11,17 +10,9 @@ from . import api, database
 
 app = FastAPI()
 
-# Get CORS origins from environment variable
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
-
-# Enable CORS for frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS is handled by nginx in production (proxy_hide_header strips backend headers,
+# nginx injects Access-Control-Allow-Origin: * for all /api/ responses).
+# No CORSMiddleware needed here.
 
 @app.on_event("startup")
 def on_startup():
