@@ -10,22 +10,59 @@ A full-stack dashboard for managing SAST scan results across GitHub repositories
 
 ## Setup
 
-### Backend
+### Step 1 — Configure Environment Variables
+
+Create `backend/.env` before starting the backend or running Docker:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Then edit `backend/.env`:
+
+```env
+# Required — generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+JWT_SECRET_KEY=your-secret-key-here
+JWT_EXPIRE_DAYS=30
+
+# GitHub OAuth — required only if you want to use the GitHub integration
+# See GITHUB_OAUTH_SETUP.md for step-by-step instructions
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GITHUB_REDIRECT_URI=http://YOUR_SERVER_IP_OR_DOMAIN:3000/integrations
+```
+
+> **GitHub OAuth setup:** See [GITHUB_OAUTH_SETUP.md](GITHUB_OAUTH_SETUP.md) for a step-by-step guide on creating a GitHub OAuth App and getting the `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` values.
+
+---
+
+### Step 2 — Backend
 
 ```bash
 python3 -m venv venv && source venv/bin/activate
 pip install -r backend/requirements.txt
-cp backend/.env.example backend/.env   # set JWT_SECRET_KEY
 uvicorn backend.main:app --reload      # runs on http://localhost:8000
 ```
 
-### Frontend
+### Step 3 — Frontend
 
 ```bash
 cd frontend
 npm install
 npm start   # runs on http://localhost:3000
 ```
+
+---
+
+### First Login — Create an Admin User
+
+After the backend starts, create your first admin user:
+
+```bash
+python3 add_user.py <username> <password> admin
+```
+
+---
 
 ## Docker
 
@@ -35,30 +72,17 @@ docker compose up --build
 
 Data is persisted in Docker named volumes (`vulnmonk-data`, `vulnmonk-projects`).
 
-**`backend/.env`** is loaded automatically at runtime. Create it with:
-```
-JWT_SECRET_KEY=
-JWT_EXPIRE_DAYS=30
+Make sure `backend/.env` exists with the values from Step 1 above — it is loaded automatically at runtime.
 
-# GitHub OAuth (optional — needed for github integration)
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-GITHUB_REDIRECT_URI=http://YOUR_SERVER_IP:3000/integrations
-```
+For overriding the frontend API URL at build time (non-Docker or custom deployments):
 
-Generate a secret key:
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-For overriding the frontend API URL at build time:
 ```
 REACT_APP_API_BASE_URL=http://<your-host>:8000
 ```
 
 **CLI tools inside the container:**
 ```bash
-docker exec -it vulnmonk-backend python add_user.py
+docker exec -it vulnmonk-backend python add_user.py <username> <password> admin
 docker exec -it vulnmonk-backend python add_user.py --list
 ```
 
