@@ -1,18 +1,17 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
 import {
   getGitHubIntegrations,
-  getGitHubAuthUrl,
-  handleGitHubCallback,
+  getGitHubAppInstallUrl,
+  syncGitHubAppInstallations,
   deleteGitHubIntegration,
   getGitHubRepositories,
   importGitHubProjects,
-  getCurrentUser
+  getCurrentUser,
+  getGlobalPRCheckConfig,
+  saveGlobalPRCheckConfig
 } from "../api";
 
 function Integrations() {
-  const location = useLocation();
-  const navigate = useNavigate();
   const [integrations, setIntegrations] = useState([]);
   const [selectedIntegration, setSelectedIntegration] = useState(null);
   const [repositories, setRepositories] = useState([]);
@@ -26,6 +25,9 @@ function Integrations() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalRepos, setTotalRepos] = useState(0);
   const [hasNextPage, setHasNextPage] = useState(false);
+  const [globalPrEnabled, setGlobalPrEnabled] = useState(false);
+  const [globalPrSeverity, setGlobalPrSeverity] = useState("none");
+  const [savingPrEnabled, setSavingPrEnabled] = useState(false);
 
   const loadUser = useCallback(async () => {
     try {
@@ -51,57 +53,51 @@ function Integrations() {
     }
   }, []);
 
-  const handleOAuthCallback = useCallback(async (code) => {
+  const loadGlobalPrConfig = useCallback(async () => {
     try {
-      setLoading(true);
-      addLog("info", "Completing GitHub authentication...");
-      const result = await handleGitHubCallback(code);
-      addLog("success", result.message || "Connected to GitHub successfully");
-      if (result.github_user) {
-        addLog("info", `Authenticated as: ${result.github_user}`);
-      }
-      if (result.total_integrations) {
-        addLog("info", `Created/updated ${result.total_integrations} integration(s)`);
-      }
-      if (result.created && result.created.length > 0) {
-        addLog("success", `Created: ${result.created.join(", ")}`);
-      }
-      if (result.updated && result.updated.length > 0) {
-        addLog("info", `Updated: ${result.updated.join(", ")}`);
-      }
-      await loadIntegrations();
+      const cfg = await getGlobalPRCheckConfig();
+      setGlobalPrEnabled(cfg.enabled || false);
+      setGlobalPrSeverity(cfg.block_on_severity || "none");
     } catch (error) {
-      console.error("OAuth callback error:", error);
-      addLog("error", "Failed to complete GitHub authentication: " + error.message);
-    } finally {
-      setLoading(false);
+      // Non-critical — default to false
     }
-  }, [loadIntegrations, navigate]);
+  }, []);
 
   useEffect(() => {
     loadUser();
     loadIntegrations();
-    
-    // Check if we're returning from GitHub OAuth
-    const params = new URLSearchParams(location.search);
-    const code = params.get('code');
-    if (code) {
-      handleOAuthCallback(code);
-      // Clean up URL
-      navigate('/integrations', { replace: true });
-    }
-  }, [location.search, loadUser, loadIntegrations, handleOAuthCallback, navigate]);
+    loadGlobalPrConfig();
+  }, [loadUser, loadIntegrations, loadGlobalPrConfig]);
 
-  const handleConnectGitHub = async () => {
+  const handleRefresh = async () => {
     try {
       setLoading(true);
-      addLog("info", "Opening GitHub authentication in new tab...");
-      const { auth_url } = await getGitHubAuthUrl();
-      window.open(auth_url, '_blank');
-      addLog("info", "Complete authentication in the new tab, then refresh this page");
-      setLoading(false);
+      addLog("info", "Syncing installations from GitHub App API...");
+      const result = await syncGitHubAppInstallations();
+      if (result.count > 0) {
+        addLog("info", `Synced ${result.count} installation(s): ${result.synced.join(", ")}`);
+      } else {
+        addLog("info", "No installations found on GitHub. Make sure the App is installed on your account or org.");
+      }
     } catch (error) {
-      addLog("error", "Failed to start GitHub authentication: " + error.message);
+      // Sync may fail if App credentials aren't configured — fall through to a plain reload
+      addLog("warn", "Sync skipped: " + error.message);
+    } finally {
+      await loadIntegrations();
+    }
+  };
+
+  const handleInstallApp = async () => {
+    try {
+      setLoading(true);
+      addLog("info", "Fetching GitHub App install URL...");
+      const { install_url } = await getGitHubAppInstallUrl();
+      addLog("info", "Opening GitHub App installation page in a new tab...");
+      addLog("info", "After installing, come back here and click the refresh button.");
+      window.open(install_url, '_blank');
+    } catch (error) {
+      addLog("error", "Failed to get install URL: " + error.message);
+    } finally {
       setLoading(false);
     }
   };
@@ -278,6 +274,36 @@ function Integrations() {
     }
   };
 
+  const handleToggleGlobalPr = async () => {
+    if (!isAdmin) return;
+    const newValue = !globalPrEnabled;
+    setSavingPrEnabled(true);
+    try {
+      const cfg = await getGlobalPRCheckConfig();
+      await saveGlobalPRCheckConfig({ ...cfg, enabled: newValue, block_on_severity: globalPrSeverity });
+      setGlobalPrEnabled(newValue);
+      addLog("success", `PR scanning ${newValue ? "enabled" : "disabled"} for all imported projects`);
+    } catch (error) {
+      addLog("error", "Failed to update PR scanning setting: " + error.message);
+    } finally {
+      setSavingPrEnabled(false);
+    }
+  };
+
+  const handleSavePrSettings = async () => {
+    if (!isAdmin) return;
+    setSavingPrEnabled(true);
+    try {
+      const cfg = await getGlobalPRCheckConfig();
+      await saveGlobalPRCheckConfig({ ...cfg, enabled: globalPrEnabled, block_on_severity: globalPrSeverity });
+      addLog("success", "PR scan settings saved");
+    } catch (error) {
+      addLog("error", "Failed to save PR scan settings: " + error.message);
+    } finally {
+      setSavingPrEnabled(false);
+    }
+  };
+
   const addLog = (type, message) => {
     const timestamp = new Date().toLocaleTimeString();
     setLogs(prevLogs => [...prevLogs, { type, message, timestamp }]);
@@ -293,35 +319,48 @@ function Integrations() {
     <div className="integrations-container">
       <div className="integrations-header">
         <h2>GitHub Integrations</h2>
-        {isAdmin && (
-          <button 
-            className="btn-primary github-connect-btn" 
-            onClick={handleConnectGitHub}
+        <div style={{ display: "flex", gap: "8px" }}>
+          {isAdmin && (
+            <button
+              className="btn-primary github-connect-btn"
+              onClick={handleInstallApp}
+              disabled={loading}
+            >
+              {loading ? "Loading..." : "🔗 Install GitHub App"}
+            </button>
+          )}
+          <button
+            className="btn-secondary-small"
+            onClick={handleRefresh}
             disabled={loading}
+            title="Sync installations from GitHub and refresh"
           >
-            {loading ? "Connecting..." : "🔗 Connect with GitHub"}
+            ↻ Refresh
           </button>
-        )}
+        </div>
       </div>
 
       {isAdmin && integrations.length === 0 && !loading && (
         <div className="card" style={{ marginBottom: "20px", textAlign: "center", padding: "40px" }}>
-          <div style={{ fontSize: "3rem", marginBottom: "20px" }}>🔗</div>
-          <h3>Connect Your GitHub Account</h3>
-          <p style={{ color: "#64748b", marginBottom: "24px" }}>
-            Authenticate with GitHub to create separate integrations for your personal account and each organization you belong to.
-            This provides better access control and management.
+          <div style={{ fontSize: "3rem", marginBottom: "20px" }}>📦</div>
+          <h3>Install the VulnMonk GitHub App</h3>
+          <p style={{ color: "#64748b", marginBottom: "8px" }}>
+            Install the GitHub App on your personal account or organization. GitHub will
+            automatically notify VulnMonk — no webhook or token setup needed.
           </p>
-          <button 
-            className="btn-primary" 
-            onClick={handleConnectGitHub}
+          <p style={{ color: "#64748b", marginBottom: "24px", fontSize: "0.9rem" }}>
+            After installing, click <strong>↻ Refresh</strong> to see your installation here.
+          </p>
+          <button
+            className="btn-primary"
+            onClick={handleInstallApp}
             disabled={loading}
             style={{ fontSize: "1.125rem", padding: "12px 32px" }}
           >
-            Connect with GitHub
+            Install GitHub App
           </button>
-          <p style={{ fontSize: "0.875rem", color: "#94a3b8", marginTop: "16px" }}>
-            Separate integrations will be created for your personal account and each organization.
+          <p style={{ fontSize: "0.8rem", color: "#94a3b8", marginTop: "16px" }}>
+            Requires a GitHub App to be registered and <code>GITHUB_APP_SLUG</code> set in the backend.
           </p>
         </div>
       )}
@@ -333,7 +372,7 @@ function Integrations() {
             {loading ? (
               <p>Loading integrations...</p>
             ) : integrations.length === 0 ? (
-              <p className="no-data">No integrations configured yet. Click "Connect with GitHub" to add your accounts and organizations.</p>
+              <p className="no-data">No installations yet. Click "Install GitHub App" and come back after installing.</p>
             ) : (
               <div className="integrations-items">
                 {integrations.map(integration => (
@@ -345,9 +384,21 @@ function Integrations() {
                     <div className="integration-info">
                       <div className="integration-name">
                         <strong>{integration.org_name}</strong>
+                        {integration.account_type && (
+                          <span style={{
+                            marginLeft: "8px", fontSize: "0.75rem", padding: "2px 6px",
+                            background: integration.account_type === "Organization" ? "#dbeafe" : "#f0fdf4",
+                            color: integration.account_type === "Organization" ? "#1d4ed8" : "#15803d",
+                            borderRadius: "4px", fontWeight: 600
+                          }}>
+                            {integration.account_type}
+                          </span>
+                        )}
                       </div>
                       <div className="integration-date">
-                        Added: {new Date(integration.created_at).toLocaleDateString()}
+                        {integration.installation_id
+                          ? `App install #${integration.installation_id}`
+                          : `Added: ${new Date(integration.created_at).toLocaleDateString()}`}
                       </div>
                     </div>
                     {isAdmin && (
@@ -372,6 +423,7 @@ function Integrations() {
 
         <div className="repositories-panel">
           {selectedIntegration ? (
+            <>
             <div className="card">
               <div className="repositories-header">
                 <h3>Repositories from {selectedIntegration.org_name}</h3>
@@ -480,10 +532,91 @@ function Integrations() {
                 </div>
               )}
             </div>
-          ) : (
-            <div className="card">
-              <p className="no-data">Select an integration to view repositories</p>
+
+            {/* PR Scan Settings for this org */}
+            <div className="card" style={{ marginTop: "16px", padding: "20px 24px" }}>
+              <h3 style={{ margin: "0 0 4px", fontSize: "1rem", fontWeight: 700 }}>🔁 PR Scan Settings</h3>
+              <p style={{ margin: "0 0 16px", fontSize: "0.85rem", color: "#6b7280" }}>
+                Controls automatic PR scanning for all imported projects via the GitHub App.
+                Individual repos can be opted out in <strong>Configurations → PR Checks</strong>.
+              </p>
+
+              {/* Enable / Disable toggle */}
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+                <span style={{ fontWeight: 600, fontSize: "0.95rem", color: "#374151" }}>PR Scanning</span>
+                <button
+                  onClick={handleToggleGlobalPr}
+                  disabled={!isAdmin || savingPrEnabled}
+                  style={{
+                    padding: "6px 20px",
+                    borderRadius: "20px",
+                    border: "none",
+                    cursor: isAdmin && !savingPrEnabled ? "pointer" : "not-allowed",
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
+                    background: globalPrEnabled ? "#10b981" : "#e5e7eb",
+                    color: globalPrEnabled ? "white" : "#6b7280",
+                    minWidth: "70px",
+                    transition: "all 0.2s"
+                  }}
+                  title={!isAdmin ? "Admin access required" : ""}
+                >
+                  {savingPrEnabled ? "…" : (globalPrEnabled ? "ON" : "OFF")}
+                </button>
+                {!isAdmin && <span style={{ fontSize: "0.85rem", color: "#dc2626" }}>🔒 Admin only</span>}
+              </div>
+
+              {/* Block on severity */}
+              {globalPrEnabled && (
+                <div style={{ marginBottom: "20px" }}>
+                  <label style={{ display: "block", fontWeight: 600, fontSize: "0.9rem", marginBottom: "6px", color: "#374151" }}>
+                    Block PR on Severity
+                  </label>
+                  <select
+                    value={globalPrSeverity}
+                    onChange={e => setGlobalPrSeverity(e.target.value)}
+                    disabled={!isAdmin}
+                    style={{
+                      padding: "8px 14px", borderRadius: "6px",
+                      border: "2px solid #e5e7eb", fontSize: "0.9rem",
+                      background: "#fff", cursor: isAdmin ? "pointer" : "not-allowed"
+                    }}
+                  >
+                    <option value="none">Don't block (report only)</option>
+                    <option value="INFO">Block on INFO, WARNING or ERROR</option>
+                    <option value="WARNING">Block on WARNING or ERROR</option>
+                    <option value="ERROR">Block on ERROR only</option>
+                  </select>
+                  <p style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: "4px" }}>
+                    Per-project settings override this default.
+                  </p>
+                </div>
+              )}
+
+              {isAdmin && globalPrEnabled && (
+                <button
+                  onClick={handleSavePrSettings}
+                  disabled={savingPrEnabled}
+                  style={{
+                    padding: "9px 22px", background: "#2563eb", color: "white",
+                    border: "none", borderRadius: "6px", cursor: savingPrEnabled ? "not-allowed" : "pointer",
+                    fontWeight: 600, fontSize: "0.9rem"
+                  }}
+                >
+                  {savingPrEnabled ? "Saving…" : "Save Settings"}
+                </button>
+              )}
             </div>
+            </>
+          ) : (
+            <>
+              <div className="card" style={{ marginBottom: "16px" }}>
+                <p className="no-data">Select an integration to view repositories</p>
+              </div>
+              <div className="card" style={{ padding: "20px 24px" }}>
+                <p style={{ color: "#9ca3af", fontSize: "0.9rem" }}>Select a GitHub account or organisation to configure PR scanning.</p>
+              </div>
+            </>
           )}
         </div>
       </div>

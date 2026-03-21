@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { getScans } from "../api";
 
-export default function Dashboard({ projects, totalProjects = 0, onSelectProject, onNavigate }) {
+export default function Dashboard({ projects, totalProjects = 0, totalVulnerabilities = 0, onSelectProject, onNavigate }) {
   const [stats, setStats] = useState({
     totalProjects: 0,
     totalVulnerabilities: 0,
@@ -10,60 +9,48 @@ export default function Dashboard({ projects, totalProjects = 0, onSelectProject
   });
 
   useEffect(() => {
-    // Calculate stats - fetch latest scans for each project
-    const fetchStats = async () => {
-      let totalVulnerabilities = 0;
-      let recentScans = [];
-      let projectsWithScans = new Map(); // project_id -> findings_count
+    // Use latest_scan embedded in each project — no extra API calls needed
+    let recentScans = [];
+    let projectsWithScans = new Map();
 
-      if (projects && projects.length > 0) {
-        // Fetch scans for each project to get accurate counts
-        const scanPromises = projects.map(p => getScans(p.id).catch(() => []));
-        const projectScans = await Promise.all(scanPromises);
-        
-        projects.forEach((p, idx) => {
-          const scans = projectScans[idx] || [];
-          if (scans.length > 0) {
-            // Get the latest scan
-            const latestScan = scans[0]; // scans are already sorted by date
-            const findingsCount = latestScan.findings_count || 0;
-            totalVulnerabilities += findingsCount;
-            projectsWithScans.set(p.id, findingsCount);
-            
-            // Extract project name as org/repo
-            let projectName = 'Unnamed';
-            if (p.github_url) {
-              const parts = p.github_url.replace(/\.git$/, '').split('/').filter(s => s && !s.includes(':'));
-              projectName = parts.slice(-2).join('/') || 'Unnamed';
-            } else if (p.local_path) {
-              projectName = p.local_path.split('/').filter(part => part).pop();
-            } else if (p.name) {
-              projectName = p.name;
-            }
-            
-            recentScans.push({
-              projectName: projectName,
-              date: latestScan.scan_date,
-              findings: findingsCount
-            });
-          } else {
-            projectsWithScans.set(p.id, 0);
+    if (projects && projects.length > 0) {
+      projects.forEach((p) => {
+        // Support both new format (latest_scan object) and old format (scans array)
+        const latestScan = p.latest_scan
+          ?? (Array.isArray(p.scans) && p.scans.length > 0 ? p.scans[0] : null);
+        const findingsCount = latestScan?.findings_count ?? 0;
+        projectsWithScans.set(p.id, findingsCount);
+
+        if (latestScan) {
+          let projectName = 'Unnamed';
+          if (p.github_url) {
+            const parts = p.github_url.replace(/\.git$/, '').split('/').filter(s => s && !s.includes(':'));
+            projectName = parts.slice(-2).join('/') || 'Unnamed';
+          } else if (p.local_path) {
+            projectName = p.local_path.split('/').filter(part => part).pop();
+          } else if (p.name) {
+            projectName = p.name;
           }
-        });
-        
-        recentScans = recentScans.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
-      }
-
-      setStats({
-        totalProjects: totalProjects > 0 ? totalProjects : (projects ? projects.length : 0),
-        totalVulnerabilities,
-        recentScans,
-        projectsWithScans  // Add this to state
+          recentScans.push({
+            projectId: p.id,
+            project: p,
+            projectName,
+            date: latestScan.scan_date,
+            findings: findingsCount
+          });
+        }
       });
-    };
-    
-    fetchStats();
-  }, [projects, totalProjects]);
+
+      recentScans = recentScans.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
+    }
+
+    setStats({
+      totalProjects: totalProjects > 0 ? totalProjects : (projects ? projects.length : 0),
+      totalVulnerabilities,
+      recentScans,
+      projectsWithScans
+    });
+  }, [projects, totalProjects, totalVulnerabilities]);
 
   return (
     <div className="dashboard-view">
@@ -104,9 +91,9 @@ export default function Dashboard({ projects, totalProjects = 0, onSelectProject
           {stats.recentScans.length > 0 ? (
             <div className="recent-scans-list">
               {stats.recentScans.map((scan, idx) => (
-                <div key={idx} className="scan-item">
+                <div key={idx} className="scan-item" onClick={() => onSelectProject && onSelectProject(scan.project)} style={{ cursor: 'pointer' }}>
                   <div className="scan-info">
-                    <div className="scan-name">{scan.projectName}</div>
+                    <div className="scan-name" style={{ color: 'var(--accent, #4f8ef7)' }}>{scan.projectName}</div>
                     <div className="scan-date">{new Date(scan.date).toLocaleString()}</div>
                   </div>
                   <div className="scan-findings">

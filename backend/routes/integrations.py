@@ -1,171 +1,74 @@
 import os
-import uuid
 
 import requests
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 
-from .. import crud, models, schemas, auth
+from .. import crud, models, schemas, auth, github_app
 from ..database import get_db
-
-GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
-GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
-GITHUB_REDIRECT_URI = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:3000/integrations")
 
 router = APIRouter()
 
-# ==================== GITHUB INTEGRATION ENDPOINTS ====================
+# ==================== GITHUB APP INTEGRATION ENDPOINTS ====================
 
-@router.get("/integrations/github/auth-url")
-def get_github_auth_url(
+@router.get("/integrations/github/app-install-url")
+def get_github_app_install_url(
     current_user: models.User = Depends(auth.get_current_active_admin)
 ):
-    """Get GitHub OAuth authorization URL (Admin only)."""
-    if not GITHUB_CLIENT_ID:
+    """Return the URL to install the GitHub App on an org or personal account."""
+    if not github_app.GITHUB_APP_SLUG:
         raise HTTPException(
             status_code=500,
-            detail="GitHub OAuth is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET environment variables.",
+            detail="GITHUB_APP_SLUG is not configured. Add it to your .env file.",
         )
-
-    state = str(uuid.uuid4())
-    auth_url = (
-        f"https://github.com/login/oauth/authorize?"
-        f"client_id={GITHUB_CLIENT_ID}&"
-        f"redirect_uri={GITHUB_REDIRECT_URI}&"
-        f"scope=repo,read:org&"
-        f"state={state}"
-    )
-    return {"auth_url": auth_url, "state": state}
+    return {"install_url": github_app.get_install_url()}
 
 
-@router.post("/integrations/github/callback")
-def github_oauth_callback(
-    payload: dict = Body(...),
+@router.post("/integrations/github/app/sync")
+def sync_github_app_installations(
     current_user: models.User = Depends(auth.get_current_active_admin),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Handle GitHub OAuth callback and create/update integrations (Admin only)."""
-    code = payload.get("code")
-    if not code:
-        raise HTTPException(status_code=400, detail="Authorization code is required")
-    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
-        raise HTTPException(status_code=500, detail="GitHub OAuth is not configured")
+    """Pull all current App installations from GitHub and upsert into DB.
 
+    Useful when the installation webhook was not received (e.g. ngrok was
+    not running at install time).  Requires GITHUB_APP_ID and
+    GITHUB_APP_PRIVATE_KEY to be configured.
+    """
+    if not github_app.is_configured():
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "GitHub App credentials not configured. "
+                "Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY in your .env file."
+            ),
+        )
     try:
-        # Exchange code for access token
-        token_response = requests.post(
-            "https://github.com/login/oauth/access_token",
-            headers={"Accept": "application/json"},
-            data={
-                "client_id": GITHUB_CLIENT_ID,
-                "client_secret": GITHUB_CLIENT_SECRET,
-                "code": code,
-                "redirect_uri": GITHUB_REDIRECT_URI,
+        app_jwt = github_app.get_app_jwt()
+        resp = requests.get(
+            "https://api.github.com/app/installations",
+            headers={
+                "Authorization": f"Bearer {app_jwt}",
+                "Accept": "application/vnd.github.v3+json",
             },
         )
+        resp.raise_for_status()
+        installations = resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"GitHub API error: {e}")
 
-        if token_response.status_code != 200:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to exchange code for access token: {token_response.text}",
-            )
+    synced = []
+    for inst in installations:
+        row = crud.create_or_update_app_installation(
+            db,
+            installation_id=inst["id"],
+            account_login=inst["account"]["login"],
+            account_type=inst["account"]["type"],
+        )
+        synced.append(row.org_name)
 
-        token_data = token_response.json()
-        access_token = token_data.get("access_token")
-
-        if not access_token:
-            error_msg = token_data.get("error_description", token_data.get("error", "Unknown error"))
-            raise HTTPException(status_code=400, detail=f"GitHub error: {error_msg}")
-
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "application/vnd.github.v3+json",
-        }
-
-        # Resolve GitHub username from repos
-        github_login = None
-        repos_response = requests.get("https://api.github.com/user/repos?per_page=1", headers=headers)
-        if repos_response.status_code == 200 and repos_response.json():
-            repos = repos_response.json()
-            if repos:
-                github_login = repos[0]["owner"]["login"]
-
-        if not github_login:
-            org_memberships_response = requests.get(
-                "https://api.github.com/user/memberships/orgs", headers=headers
-            )
-            if org_memberships_response.status_code == 200:
-                memberships = org_memberships_response.json()
-                if memberships:
-                    github_login = memberships[0]["user"]["login"]
-
-        # Get user's organizations
-        orgs_response = requests.get("https://api.github.com/user/orgs", headers=headers)
-        organizations = []
-        if orgs_response.status_code == 200:
-            organizations = [org["login"] for org in orgs_response.json()]
-
-        created_integrations = []
-        updated_integrations = []
-
-        # Personal account integration
-        if github_login:
-            personal_org_name = f"{github_login} (Personal)"
-            existing = db.query(models.GitHubIntegration).filter(
-                models.GitHubIntegration.org_name == personal_org_name
-            ).first()
-            if existing:
-                existing.access_token = access_token
-                existing.organizations = []
-                db.commit()
-                updated_integrations.append(personal_org_name)
-            else:
-                crud.create_github_integration(
-                    db,
-                    schemas.GitHubIntegrationCreate(
-                        org_name=personal_org_name, access_token=access_token, organizations=[]
-                    ),
-                )
-                created_integrations.append(personal_org_name)
-
-        # Organization integrations
-        for org_name in organizations:
-            existing = db.query(models.GitHubIntegration).filter(
-                models.GitHubIntegration.org_name == org_name
-            ).first()
-            if existing:
-                existing.access_token = access_token
-                existing.organizations = []
-                db.commit()
-                updated_integrations.append(org_name)
-            else:
-                crud.create_github_integration(
-                    db,
-                    schemas.GitHubIntegrationCreate(
-                        org_name=org_name, access_token=access_token, organizations=[]
-                    ),
-                )
-                created_integrations.append(org_name)
-
-        total = len(created_integrations) + len(updated_integrations)
-        message = f"Successfully connected {total} integration(s)"
-        if created_integrations:
-            message += f" (Created: {', '.join(created_integrations)})"
-        if updated_integrations:
-            message += f" (Updated: {', '.join(updated_integrations)})"
-
-        return {
-            "github_user": github_login,
-            "organizations": organizations,
-            "total_integrations": total,
-            "created": created_integrations,
-            "updated": updated_integrations,
-            "message": message,
-        }
-
-    except requests.RequestException as e:
-        raise HTTPException(status_code=500, detail=f"GitHub API error: {str(e)}")
+    return {"synced": synced, "count": len(synced)}
 
 
 @router.post("/integrations/github", response_model=schemas.GitHubIntegration)
@@ -174,7 +77,7 @@ def create_github_integration(
     current_user: models.User = Depends(auth.get_current_active_admin),
     db: Session = Depends(get_db)
 ):
-    """Create a new GitHub integration (Admin only)."""
+    """Manually create a GitHub integration (Admin only)."""
     return crud.create_github_integration(db, integration)
 
 
@@ -183,7 +86,7 @@ def list_github_integrations(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
-    """List all GitHub integrations."""
+    """List all GitHub App installations / integrations."""
     return crud.get_github_integrations(db)
 
 
@@ -211,19 +114,34 @@ def get_github_repositories(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Fetch repositories from the specific organization/account with pagination."""
+    """Fetch repositories accessible to this installation / integration."""
     integration = crud.get_github_integration(db, integration_id)
     if not integration:
         raise HTTPException(status_code=404, detail="Integration not found")
 
     try:
+        # ── Resolve auth token ────────────────────────────────────────────
+        if integration.installation_id:
+            token = github_app.get_installation_token(integration.installation_id)
+        elif integration.access_token:
+            token = integration.access_token
+        else:
+            raise HTTPException(status_code=400,
+                                detail="Integration has no access token or installation ID")
+
         headers = {
-            "Authorization": f"Bearer {integration.access_token}",
+            "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github.v3+json",
         }
 
+        # ── Choose correct repos endpoint ─────────────────────────────────
         org_name = integration.org_name
-        if org_name.endswith(" (Personal)"):
+        if integration.account_type == "Organization":
+            repos_url = f"https://api.github.com/orgs/{org_name}/repos"
+        elif integration.installation_id:
+            # App installs: list repos the installation can access
+            repos_url = "https://api.github.com/installation/repositories"
+        elif org_name.endswith(" (Personal)"):
             username = org_name.replace(" (Personal)", "")
             repos_url = f"https://api.github.com/users/{username}/repos"
         else:
@@ -236,7 +154,9 @@ def get_github_repositories(
                 repos_url, headers=headers, params={"per_page": 100, "page": github_page}
             )
             if response.status_code == 200:
-                repos = response.json()
+                data = response.json()
+                # /installation/repositories wraps results
+                repos = data.get("repositories", data) if isinstance(data, dict) else data
                 if not repos:
                     break
                 for repo in repos:
@@ -255,7 +175,7 @@ def get_github_repositories(
             else:
                 raise HTTPException(
                     status_code=response.status_code,
-                    detail=f"Failed to fetch repositories from GitHub: {response.text}",
+                    detail=f"Failed to fetch repositories: {response.text}",
                 )
 
         total_repos = len(all_repos)

@@ -4,7 +4,9 @@ import {
   updateExcludeRules, 
   updateIncludeRules,
   updateGlobalConfig,
-  getAllGlobalConfigs
+  getAllGlobalConfigs,
+  getPRCheckConfig,
+  savePRCheckConfig
 } from "../api";
 
 export default function Configurations({ user }) {
@@ -27,6 +29,10 @@ export default function Configurations({ user }) {
   // Include rules state - store as array of files
   const [includeYamlFiles, setIncludeYamlFiles] = useState([]);
   const [globalIncludeYamlFiles, setGlobalIncludeYamlFiles] = useState([]);
+
+  // PR Check state
+  const [prConfig, setPrConfig] = useState(null);  // { enabled, webhook_secret, block_on_severity }
+  const [prSaving, setPrSaving] = useState(false);
 
   const isAdmin = user && user.role === "admin";
 
@@ -78,6 +84,11 @@ export default function Configurations({ user }) {
     setSelectedProject(project);
     setNewRule("");
     setMessage(null);
+    setPrConfig(null);
+    // Load PR check config
+    getPRCheckConfig(project.id)
+      .then(cfg => setPrConfig(cfg))
+      .catch(() => setPrConfig({ enabled: false, webhook_secret: "", block_on_severity: "none" }));
     // Parse include rules as JSON array
     try {
       const parsed = project.include_rules_yaml ? JSON.parse(project.include_rules_yaml) : [];
@@ -352,8 +363,22 @@ export default function Configurations({ user }) {
     setGlobalIncludeYamlFiles([]);
   };
 
-  // Global rules are now always applied automatically - no toggle needed
+  const handleSavePrConfig = async () => {
+    if (!selectedProject || !prConfig) return;
+    setPrSaving(true);
+    setMessage(null);
+    try {
+      const updated = await savePRCheckConfig(selectedProject.id, prConfig);
+      setPrConfig(updated);
+      setMessage({ type: "success", text: "PR check settings saved!" });
+    } catch (err) {
+      setMessage({ type: "error", text: err.message || "Failed to save PR check settings" });
+    } finally {
+      setPrSaving(false);
+    }
+  };
 
+  // Global rules are now always applied automatically - no toggle needed
 
   return (
     <div className="configurations-container">
@@ -693,8 +718,87 @@ export default function Configurations({ user }) {
                 </div>
               </div>
 
+              {/* PR Checks Section */}
+              <div className="config-section" style={{ marginTop: "32px" }}>
+                <h4 style={{ fontSize: "1rem", marginBottom: "4px", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
+                  🔔 PR Checks
+                </h4>
+                <p style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "16px" }}>
+                  When <strong>ON</strong>: uses this project's custom severity settings below, overriding the global default.<br/>
+                  When <strong>OFF</strong>: inherits the global PR scan setting from Integrations (scanning still runs if global is ON).
+                </p>
+                {!prConfig ? (
+                  <p style={{ color: "#64748b", fontSize: "0.9rem" }}>Loading...</p>
+                ) : (
+                  <div className="config-rules-form">
+                    {/* Enable toggle */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+                      <label style={{ fontWeight: 600, fontSize: "0.95rem", color: "#374151" }}>
+                        Use custom settings for this project
+                      </label>
+                      <button
+                        onClick={() => isAdmin && setPrConfig({ ...prConfig, enabled: !prConfig.enabled })}
+                        disabled={!isAdmin}
+                        style={{
+                          padding: "6px 18px",
+                          borderRadius: "20px",
+                          border: "none",
+                          cursor: isAdmin ? "pointer" : "not-allowed",
+                          fontWeight: 600,
+                          fontSize: "0.9rem",
+                          background: prConfig.enabled ? "#10b981" : "#e5e7eb",
+                          color: prConfig.enabled ? "white" : "#6b7280",
+                          transition: "all 0.2s"
+                        }}
+                        title={!isAdmin ? "Admin access required" : ""}
+                      >
+                        {prConfig.enabled ? "ON" : "OFF"}
+                      </button>
+                      {!isAdmin && <span style={{ fontSize: "0.85rem", color: "#dc2626" }}>(Admin only)</span>}
+                    </div>
+
+                    {prConfig.enabled && (
+                      <>
+                        {/* Block severity */}
+                        <div style={{ marginBottom: "16px" }}>
+                          <label style={{ fontSize: "0.9rem", fontWeight: 600, display: "block", marginBottom: "6px", color: "#374151" }}>
+                            Block PR on Severity
+                          </label>
+                          <select
+                            value={prConfig.block_on_severity || "none"}
+                            onChange={e => isAdmin && setPrConfig({ ...prConfig, block_on_severity: e.target.value })}
+                            disabled={!isAdmin}
+                            style={{ padding: "9px 14px", border: "2px solid #e5e7eb", borderRadius: "8px", fontSize: "0.9rem", background: "#fff" }}
+                          >
+                            <option value="none">Do not block (report only)</option>
+                            <option value="INFO">Block on INFO, WARNING or ERROR</option>
+                            <option value="WARNING">Block on WARNING or ERROR</option>
+                            <option value="ERROR">Block on ERROR only</option>
+                          </select>
+                          <p style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "4px" }}>
+                            Requires a branch protection rule in GitHub requiring the <code>vulnmonk/pr-scan</code> status check to pass.
+                          </p>
+                        </div>
+                      </>
+                    )}
+
+                    {isAdmin && (
+                      <button
+                        className="primary-btn"
+                        onClick={handleSavePrConfig}
+                        disabled={prSaving}
+                        style={{ padding: "10px 24px" }}
+                      >
+                        {prSaving ? "Saving..." : "Save PR Check Settings"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Global Rules Section (Admin Only) */}
               {isAdmin && (
+                <>
                 <div className="config-section" style={{ marginTop: "32px", borderTop: "2px solid #e5e7eb", paddingTop: "32px" }}>
                   <h4 style={{ fontSize: "1.05rem", marginBottom: "16px", fontWeight: 700, color: "#0f172a" }}>
                     🌍 Global Rules (All Projects)
@@ -857,6 +961,8 @@ export default function Configurations({ user }) {
                     )}
                   </div>
                 </div>
+
+                </>
               )}
             </>
           ) : (

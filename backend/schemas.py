@@ -72,6 +72,7 @@ class ScanResultCreate(ScanResultBase):
 class ScanResult(ScanResultBase):
     id: int
     project_id: int
+    findings_count: Optional[int] = None
     class Config:
         from_attributes = True
 
@@ -115,11 +116,17 @@ class ProjectCreate(BaseModel):
             validate_exclude_rules_str(v)
         return v
 
+class LatestScan(BaseModel):
+    id: int
+    scan_date: Optional[datetime] = None
+    findings_count: Optional[int] = None
+
+
 class Project(ProjectBase):
     id: int
     created_at: datetime
     integration_id: Optional[int] = None
-    scans: List[ScanResult] = []
+    latest_scan: Optional[LatestScan] = None
     class Config:
         from_attributes = True
 
@@ -142,11 +149,15 @@ class GitHubIntegrationBase(BaseModel):
     org_name: str
 
 class GitHubIntegrationCreate(GitHubIntegrationBase):
-    access_token: str
+    access_token: Optional[str] = ""
     organizations: Optional[List[str]] = []
+    installation_id: Optional[int] = None
+    account_type: Optional[str] = "User"
 
 class GitHubIntegration(GitHubIntegrationBase):
     id: int
+    installation_id: Optional[int] = None
+    account_type: Optional[str] = "User"
     organizations: Optional[List[str]] = []
     created_at: datetime
     updated_at: datetime
@@ -169,3 +180,48 @@ class GitHubRepositoriesResponse(BaseModel):
     total: int
     total_pages: int
     has_next: bool
+
+
+# PR Check Config Schemas
+class PRCheckConfigOut(BaseModel):
+    project_id: int
+    enabled: bool
+    webhook_secret: Optional[str] = None
+    block_on_severity: str  # none | INFO | WARNING | ERROR
+
+    class Config:
+        from_attributes = True
+
+    @classmethod
+    def from_orm(cls, obj):
+        return cls(
+            project_id=obj.project_id,
+            enabled=bool(obj.enabled),
+            webhook_secret=obj.webhook_secret,
+            block_on_severity=obj.block_on_severity or "none",
+        )
+
+
+class PRCheckConfigUpdate(BaseModel):
+    enabled: bool
+    webhook_secret: Optional[str] = None
+    block_on_severity: str = "none"
+
+
+# PR Scan Result Schemas
+class PRScanSummary(BaseModel):
+    id: int
+    project_id: int
+    pr_number: int
+    pr_title: str
+    head_sha: str
+    base_branch: str
+    head_branch: str
+    repo_full_name: str
+    status: str
+    findings_count: int
+    changed_files: Optional[List[str]] = []
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from "react";
-import { getScans, getScanDetail, triggerScan, markFalsePositive, getScanStatus } from "../api";
+import { getScans, getScanDetail, triggerScan, markFalsePositive, unmarkFalsePositive, getScanStatus, getPRScans, getPRScanDetail } from "../api";
 
 // Parse date string from backend (may be missing Z suffix) and format in user's local timezone
 function formatDate(dateStr) {
@@ -14,6 +14,7 @@ function formatDate(dateStr) {
 }
 
 export default function ScanResults({ project, user }) {
+  const [activeTab, setActiveTab] = useState("full"); // "full" | "pr"
   const [scanHistory, setScanHistory] = useState([]);
   const [scanDetail, setScanDetail] = useState(null);
   const [scanning, setScanning] = useState(false);
@@ -21,6 +22,10 @@ export default function ScanResults({ project, user }) {
   const [showFalsePositives, setShowFalsePositives] = useState(false);
   const [showLogs, setShowLogs] = useState(true);
   const pollRef = useRef(null);
+
+  // PR scans state
+  const [prScans, setPrScans] = useState([]);
+  const [prScanDetail, setPrScanDetail] = useState(null);
 
   // Poll server scan status so the banner shows even after re-navigation
   useEffect(() => {
@@ -65,7 +70,9 @@ export default function ScanResults({ project, user }) {
   useEffect(() => {
     if (project) {
       getScans(project.id).then(setScanHistory);
+      getPRScans(project.id).then(setPrScans).catch(() => setPrScans([]));
       setScanDetail(null);
+      setPrScanDetail(null);
       setLogs([]);
     }
   }, [project]);
@@ -90,9 +97,7 @@ export default function ScanResults({ project, user }) {
       ]);
     } finally {
       setScanning(false);
-      // Restart polling to pick up the new scan in history
       clearTimeout(pollRef.current);
-      getScans(project.id).then(setScanHistory);
     }
   };
 
@@ -106,13 +111,46 @@ export default function ScanResults({ project, user }) {
     setScanDetail(detail);
   };
 
+  const handleSelectPRScan = async (prScan) => {
+    setPrScanDetail(null);
+    const detail = await getPRScanDetail(prScan.id);
+    setPrScanDetail(detail);
+  };
+
+  const prStatusBadge = (status) => {
+    const map = {
+      pending:  { bg: '#fef9c3', color: '#92400e', label: '⏳ Pending' },
+      success:  { bg: '#dcfce7', color: '#166534', label: '✅ Passed' },
+      failure:  { bg: '#fee2e2', color: '#991b1b', label: '❌ Blocked' },
+      error:    { bg: '#f1f5f9', color: '#475569', label: '⚠️ Error' },
+    };
+    const s = map[status] || map.error;
+    return (
+      <span style={{ padding: '2px 10px', borderRadius: '12px', fontSize: '0.8rem',
+        fontWeight: 600, background: s.bg, color: s.color }}>
+        {s.label}
+      </span>
+    );
+  };
+
   const handleMarkFalsePositive = async (uniqueKey) => {
     await markFalsePositive(project.id, uniqueKey);
     setLogs(l => [
       { type: 'success', msg: 'Marked as false positive' },
       ...l.slice(0, 4)
     ]);
-    // Refresh scan detail
+    if (scanDetail) {
+      const detail = await getScanDetail(scanDetail.id);
+      setScanDetail(detail);
+    }
+  };
+
+  const handleUnmarkFalsePositive = async (uniqueKey) => {
+    await unmarkFalsePositive(project.id, uniqueKey);
+    setLogs(l => [
+      { type: 'success', msg: 'Removed from false positives' },
+      ...l.slice(0, 4)
+    ]);
     if (scanDetail) {
       const detail = await getScanDetail(scanDetail.id);
       setScanDetail(detail);
@@ -157,23 +195,42 @@ export default function ScanResults({ project, user }) {
           return 'Unnamed';
         })()}</h2>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <span style={{ 
-            fontSize: '0.9rem', 
-            color: '#64748b',
-            fontWeight: 500 
-          }}>
+          <span style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 500 }}>
             📋 {scanHistory.length} {scanHistory.length === 1 ? 'scan' : 'scans'} in history
           </span>
           {scanHistory.length > 0 && (
-            <span style={{ 
-              fontSize: '0.85rem', 
-              color: '#94a3b8' 
-            }}>
+            <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
               • Last scan: {formatDate(scanHistory[0].scan_date)}
             </span>
           )}
         </div>
       </div>
+
+      {/* Tab switcher */}
+      <div style={{ display: 'flex', gap: '4px', marginBottom: '20px', borderBottom: '2px solid #e5e7eb', paddingBottom: '0' }}>
+        {['full', 'pr'].map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            style={{
+              padding: '8px 20px',
+              border: 'none',
+              borderBottom: activeTab === tab ? '2px solid #2563eb' : '2px solid transparent',
+              marginBottom: '-2px',
+              background: 'transparent',
+              fontWeight: activeTab === tab ? 700 : 400,
+              color: activeTab === tab ? '#2563eb' : '#64748b',
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            {tab === 'full' ? '🔍 Full Scans' : `🔔 PR Scans${prScans.length > 0 ? ` (${prScans.length})` : ''}`}
+          </button>
+        ))}
+      </div>
+
+      {/* ─── FULL SCANS TAB ─── */}
+      {activeTab === 'full' && (<>
 
       <div className="project-controls">
         {scanning && (
@@ -463,6 +520,7 @@ export default function ScanResults({ project, user }) {
                     <th>Class</th>
                     <th>Severity</th>
                     <th>Status</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -487,6 +545,17 @@ export default function ScanResults({ project, user }) {
                         </td>
                         <td><span className={badgeColor(vul.extra?.severity)}>{vul.extra?.severity}</span></td>
                         <td><span className="badge" style={{ background: "#64748b" }}>False Positive</span></td>
+                        <td>
+                          <button
+                            onClick={() => handleUnmarkFalsePositive(vul.unique_key)}
+                            style={{ padding: "6px 12px", fontSize: "0.85rem" }}
+                            className="secondary"
+                            disabled={!isAdmin}
+                            title={!isAdmin ? "Admin access required" : "Remove from false positives"}
+                          >
+                            Remove FP
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -496,6 +565,122 @@ export default function ScanResults({ project, user }) {
           )}
         </>
       )}
+        </>
+      )}
+
+      {/* ─── PR SCANS TAB ─── */}
+      {activeTab === 'pr' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ margin: 0 }}>PR Scan History</h3>
+            <button
+              className="secondary"
+              style={{ fontSize: '0.85rem', padding: '6px 14px' }}
+              onClick={() => getPRScans(project.id).then(setPrScans).catch(() => {})}
+            >
+              ↻ Refresh
+            </button>
+          </div>
+
+          {prScans.length === 0 ? (
+            <p className="empty-message">
+              No PR scans yet. Enable PR Checks in Configurations, add the webhook to your GitHub repo, then open a PR.
+            </p>
+          ) : (
+            <div className="scan-history-compact" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+              {prScans.map(pr => (
+                <button
+                  key={pr.id}
+                  className={`scan-history-row${prScanDetail && prScanDetail.id === pr.id ? ' active' : ''}`}
+                  onClick={() => handleSelectPRScan(pr)}
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', height: 'auto', padding: '10px 14px' }}
+                >
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center', width: '100%' }}>
+                    <span style={{ fontWeight: 700, color: '#2563eb' }}>#{pr.pr_number}</span>
+                    <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {pr.pr_title || '(no title)'}
+                    </span>
+                    {prStatusBadge(pr.status)}
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', fontSize: '0.8rem', color: '#64748b' }}>
+                    <span>🌿 {pr.head_branch} → {pr.base_branch}</span>
+                    <span>📂 {(pr.changed_files || []).length} files</span>
+                    <span>🔍 {pr.findings_count} finding{pr.findings_count !== 1 ? 's' : ''}</span>
+                    <span>{formatDate(pr.created_at)}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {prScanDetail && (
+            <div className="scan-detail-section" style={{ marginTop: '24px' }}>
+              <div style={{ marginBottom: '16px' }}>
+                <h4 style={{ margin: '0 0 4px 0' }}>
+                  PR #{prScanDetail.pr_number}: {prScanDetail.pr_title}
+                </h4>
+                <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: '#64748b', flexWrap: 'wrap' }}>
+                  <span>🌿 {prScanDetail.head_branch} → {prScanDetail.base_branch}</span>
+                  <span>🔗 {prScanDetail.head_sha?.slice(0, 8)}</span>
+                  <span>Status: {prStatusBadge(prScanDetail.status)}</span>
+                </div>
+                <div style={{ marginTop: '8px', fontSize: '0.85rem', color: '#64748b' }}>
+                  <strong>Changed files scanned:</strong>{' '}
+                  {(prScanDetail.changed_files || []).join(', ') || 'none'}
+                </div>
+                <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '6px' }}>
+                  ℹ️ Only findings on lines changed in this PR are shown.
+                </p>
+              </div>
+
+              {prScanDetail.result_json?.error ? (
+                <div style={{ padding: '12px', background: '#fef2f2', borderRadius: '8px', color: '#dc2626' }}>
+                  Scan error: {prScanDetail.result_json.error}
+                </div>
+              ) : (prScanDetail.result_json?.results || []).length === 0 ? (
+                <p className="empty-message">✅ No security issues found in the changed lines.</p>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Path</th>
+                      <th>Line</th>
+                      <th>Class</th>
+                      <th>Severity</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(prScanDetail.result_json.results || []).map((vul, idx) => {
+                      const semgrepUrl = buildSemgrepUrl(vul.check_id);
+                      const vulClass = Array.isArray(vul.extra?.metadata?.vulnerability_class)
+                        ? vul.extra.metadata.vulnerability_class.join(', ')
+                        : vul.extra?.metadata?.vulnerability_class || '';
+                      const githubUrl = buildGitHubUrl(vul.path, vul.start?.line);
+                      return (
+                        <tr key={idx}>
+                          <td>
+                            {githubUrl
+                              ? <a href={githubUrl} target="_blank" rel="noopener noreferrer" className="github-link">{vul.path}</a>
+                              : vul.path}
+                          </td>
+                          <td>{vul.start?.line}</td>
+                          <td>
+                            {semgrepUrl && vulClass
+                              ? <a href={semgrepUrl} target="_blank" rel="noopener noreferrer" className="github-link">{vulClass}</a>
+                              : vulClass}
+                          </td>
+                          <td><span className={badgeColor(vul.extra?.severity)}>{vul.extra?.severity}</span></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }

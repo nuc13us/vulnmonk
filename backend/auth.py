@@ -82,12 +82,4 @@ def get_current_active_admin(current_user: models.User = Depends(get_current_use
         )
     return current_user
 
-# Optional: Get current user or None (for endpoints that can work with/without auth)
-def get_optional_user(token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """Get current user if token is valid, otherwise return None."""
-    if not token:
-        return None
-    try:
-        return get_current_user(token, db)
-    except HTTPException:
-        return None
+

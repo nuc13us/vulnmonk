@@ -24,6 +24,9 @@ class ScanResult(Base):
     project_id = Column(Integer, ForeignKey('projects.id'))
     scan_date = Column(DateTime, default=datetime.datetime.utcnow)
     result_json = Column(JSON)
+    # Stored at scan time and updated when FPs are marked/unmarked — avoids
+    # deserialising result_json just to count open findings on every list request.
+    findings_count = Column(Integer, nullable=True, default=None)
     project = relationship("Project", back_populates="scans")
 
 class FalsePositive(Base):
@@ -57,7 +60,43 @@ class GitHubIntegration(Base):
     __tablename__ = 'github_integrations'
     id = Column(Integer, primary_key=True, index=True)
     org_name = Column(String, nullable=False, index=True)
-    access_token = Column(String, nullable=False)  # GitHub Personal Access Token
-    organizations = Column(JSON, default=list)  # List of organization names user has access to
+    # GitHub App installs: installation_id is set; access_token is left empty.
+    # Legacy OAuth integrations: access_token is set; installation_id is None.
+    installation_id = Column(Integer, nullable=True, unique=True, index=True)
+    account_type = Column(String, default="User")  # "User" or "Organization"
+    access_token = Column(String, nullable=True, default="")  # Legacy OAuth token
+    organizations = Column(JSON, default=list)  # Legacy OAuth org list
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class PRCheckConfig(Base):
+    """Per-project PR check configuration."""
+    __tablename__ = 'pr_check_configs'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), unique=True, nullable=False)
+    # Default enabled=0: per-project custom settings are off by default; scanning
+    # is governed by the global PR scan toggle in Integrations.
+    # Set to 1 to use this project's own severity settings instead of the global default.
+    enabled = Column(Integer, default=0)
+    webhook_secret = Column(String, nullable=True) # Legacy / unused with GitHub App
+    block_on_severity = Column(String, default="none")  # none | INFO | WARNING | ERROR
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class PRScanResult(Base):
+    """Stores scan results triggered by a GitHub PR webhook event."""
+    __tablename__ = 'pr_scan_results'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), nullable=False)
+    pr_number = Column(Integer, nullable=False)
+    pr_title = Column(String, default="")
+    head_sha = Column(String, nullable=False)
+    base_branch = Column(String, default="")
+    head_branch = Column(String, default="")
+    repo_full_name = Column(String, default="")  # e.g. "org/repo"
+    # pending → running → success | failure | error
+    status = Column(String, default="pending")
+    findings_count = Column(Integer, default=0)
+    result_json = Column(JSON, nullable=True)       # filtered findings
+    changed_files = Column(JSON, nullable=True)     # list of changed file paths
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)

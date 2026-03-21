@@ -38,12 +38,20 @@ function getHeaders(includeAuth = true) {
 }
 
 // Central fetch wrapper — automatically handles 401 auth expiry
+// Sentinel error thrown on 401 — suppressed from the dev overlay in index.js
+export class AuthExpiredError extends Error {
+  constructor() {
+    super("Session expired. Please log in again.");
+    this.name = "AuthExpiredError";
+  }
+}
+
 async function apiFetch(url, options = {}) {
   const res = await fetch(url, options);
   if (res.status === 401) {
     removeAuthToken();
     window.dispatchEvent(new CustomEvent("auth:expired"));
-    throw new Error("Session expired. Please log in again.");
+    throw new AuthExpiredError();
   }
   return res;
 }
@@ -244,15 +252,8 @@ export async function markFalsePositive(projectId, uniqueKey) {
   return res.json();
 }
 
-export async function getFalsePositives(projectId) {
-  const res = await apiFetch(`${API_BASE}/projects/${projectId}/false-positives/`, {
-    headers: getHeaders()
-  });
-  return res.json();
-}
-
 export async function unmarkFalsePositive(projectId, uniqueKey) {
-  const res = await apiFetch(`${API_BASE}/projects/${projectId}/false-positives/${encodeURIComponent(uniqueKey)}`, {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/false-positives?unique_key=${encodeURIComponent(uniqueKey)}`, {
     method: "DELETE",
     headers: getHeaders()
   });
@@ -274,24 +275,6 @@ export async function updateIncludeRules(projectId, yamlContent, applyGlobalIncl
   if (!res.ok) {
     const error = await res.json();
     throw new Error(error.detail || "Failed to update include rules");
-  }
-  
-  return res.json();
-}
-
-export async function updateGlobalPreferences(projectId, applyGlobalExclude, applyGlobalInclude) {
-  const res = await apiFetch(`${API_BASE}/projects/${projectId}/global_preferences/`, {
-    method: "PUT",
-    headers: getHeaders(),
-    body: JSON.stringify({ 
-      apply_global_exclude: applyGlobalExclude,
-      apply_global_include: applyGlobalInclude
-    })
-  });
-  
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || "Failed to update global preferences");
   }
   
   return res.json();
@@ -330,31 +313,14 @@ export async function getAllGlobalConfigs() {
 
 // ==================== GITHUB INTEGRATION ENDPOINTS ====================
 
-export async function getGitHubAuthUrl() {
-  const res = await apiFetch(`${API_BASE}/integrations/github/auth-url`, {
+export async function getGitHubAppInstallUrl() {
+  const res = await apiFetch(`${API_BASE}/integrations/github/app-install-url`, {
     headers: getHeaders()
   });
-  
   if (!res.ok) {
     const error = await res.json();
-    throw new Error(error.detail || "Failed to get GitHub auth URL");
+    throw new Error(error.detail || "Failed to get GitHub App install URL");
   }
-  
-  return res.json();
-}
-
-export async function handleGitHubCallback(code) {
-  const res = await apiFetch(`${API_BASE}/integrations/github/callback`, {
-    method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify({ code: code })
-  });
-  
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || "Failed to complete GitHub authentication");
-  }
-  
   return res.json();
 }
 
@@ -426,5 +392,77 @@ export async function importGitHubProjects(integrationId, repoUrls) {
     throw new Error(error.detail || "Failed to import projects");
   }
   
+  return res.json();
+}
+
+export async function syncGitHubAppInstallations() {
+  const res = await apiFetch(`${API_BASE}/integrations/github/app/sync`, {
+    method: "POST",
+    headers: getHeaders()
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || "Sync failed");
+  }
+  return res.json();
+}
+
+// ==================== PR CHECK ENDPOINTS ====================
+
+export async function getPRCheckConfig(projectId) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/pr-check-config`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to load PR check config");
+  return res.json();
+}
+
+export async function savePRCheckConfig(projectId, { enabled, webhook_secret, block_on_severity }) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/pr-check-config`, {
+    method: "PUT",
+    headers: getHeaders(),
+    body: JSON.stringify({ enabled, webhook_secret, block_on_severity })
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to save PR check config");
+  }
+  return res.json();
+}
+
+export async function getPRScans(projectId) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/pr-scans/`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to load PR scans");
+  return res.json();
+}
+
+export async function getPRScanDetail(prScanId) {
+  const res = await apiFetch(`${API_BASE}/pr-scans/${prScanId}/`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to load PR scan detail");
+  return res.json();
+}
+
+export async function getGlobalPRCheckConfig() {
+  const res = await apiFetch(`${API_BASE}/configurations/global/pr-checks`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to load global PR check config");
+  return res.json();
+}
+
+export async function saveGlobalPRCheckConfig({ enabled, block_on_severity, webhook_secret }) {
+  const res = await apiFetch(`${API_BASE}/configurations/global/pr-checks`, {
+    method: "PUT",
+    headers: getHeaders(),
+    body: JSON.stringify({ enabled, block_on_severity, webhook_secret })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to save global PR config");
+  }
   return res.json();
 }

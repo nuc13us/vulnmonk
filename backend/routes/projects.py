@@ -2,12 +2,15 @@ import copy
 import json
 import os
 import re
+import secrets
+import shutil
 import subprocess
 import tempfile
 import uuid
 import yaml
 
 from fastapi import APIRouter, Body, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -256,14 +259,63 @@ def read_projects(
     projects = query.offset(skip).limit(per_page).all()
 
     total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+
+    # Fetch the latest scan summary for each project in one query instead of N lazy-loads
+    project_ids = [p.id for p in projects]
+    latest_scans = {}
+    if project_ids:
+        # Subquery: max scan_date per project
+        sub = (
+            db.query(
+                models.ScanResult.project_id,
+                func.max(models.ScanResult.id).label("max_id"),
+            )
+            .filter(models.ScanResult.project_id.in_(project_ids))
+            .group_by(models.ScanResult.project_id)
+            .subquery()
+        )
+        rows = (
+            db.query(models.ScanResult)
+            .join(sub, models.ScanResult.id == sub.c.max_id)
+            .all()
+        )
+        for row in rows:
+            latest_scans[row.project_id] = {
+                "id": row.id,
+                "scan_date": row.scan_date.isoformat() if row.scan_date else None,
+                "findings_count": row.findings_count,
+            }
+
+    project_list = []
+    for p in projects:
+        item = schemas.Project.from_orm(p).dict()
+        item["latest_scan"] = latest_scans.get(p.id)
+        project_list.append(item)
+
+    # Compute total vulnerabilities across ALL projects (not just current page)
+    latest_sub = (
+        db.query(
+            models.ScanResult.project_id,
+            func.max(models.ScanResult.id).label("max_id"),
+        )
+        .group_by(models.ScanResult.project_id)
+        .subquery()
+    )
+    total_vulns_row = (
+        db.query(func.coalesce(func.sum(models.ScanResult.findings_count), 0))
+        .join(latest_sub, models.ScanResult.id == latest_sub.c.max_id)
+        .scalar()
+    )
+
     return {
-        "projects": [schemas.Project.from_orm(p) for p in projects],
+        "projects": project_list,
         "page": page,
         "per_page": per_page,
         "total": total,
         "total_pages": total_pages,
         "has_next": page < total_pages,
         "has_prev": page > 1,
+        "total_vulnerabilities": total_vulns_row or 0,
     }
 
 
@@ -376,7 +428,14 @@ def trigger_scan(
                     finding["status"] = "open"
 
         scan = schemas.ScanResultCreate(result_json=scan_result)
-        db_scan = crud.create_scan_result(db=db, scan=scan, project_id=project_id)
+        # Compute open findings_count at save time (total minus already-marked FPs)
+        fp_keys = {fp.unique_key for fp in crud.get_false_positives(db, project_id)}
+        raw_count = sum(
+            1 for f in (scan_result.get("results", []) if isinstance(scan_result, dict) else [])
+            if generate_unique_key(f) not in fp_keys
+        )
+        db_scan = crud.create_scan_result(db=db, scan=scan, project_id=project_id,
+                                          findings_count=raw_count)
 
         processed_result = process_scan_findings(scan_result, project_id, db)
         return {
@@ -393,7 +452,6 @@ def trigger_scan(
     finally:
         scanning_projects.discard(project_id)
         if os.path.exists(temp_path):
-            import shutil
             shutil.rmtree(temp_path, ignore_errors=True)
 
 
@@ -408,18 +466,23 @@ def read_scan_summaries(
     db: Session = Depends(get_db)
 ):
     scans = crud.get_scan_results(db, project_id=project_id, skip=skip, limit=limit)
-    false_positives = crud.get_false_positives(db, project_id)
-    fp_keys = {fp.unique_key for fp in false_positives}
 
     summaries = []
     for scan in scans:
-        count = 0
-        if scan.result_json and isinstance(scan.result_json, dict):
-            results = scan.result_json.get("results", [])
-            if isinstance(results, list):
-                for finding in results:
-                    if generate_unique_key(finding) not in fp_keys:
-                        count += 1
+        if scan.findings_count is not None:
+            # Fast path: stored count is up to date
+            count = scan.findings_count
+        else:
+            # Fallback for old rows not yet backfilled
+            false_positives = crud.get_false_positives(db, project_id)
+            fp_keys = {fp.unique_key for fp in false_positives}
+            count = 0
+            if scan.result_json and isinstance(scan.result_json, dict):
+                results = scan.result_json.get("results", [])
+                if isinstance(results, list):
+                    for finding in results:
+                        if generate_unique_key(finding) not in fp_keys:
+                            count += 1
         summaries.append({
             "id": scan.id,
             "scan_date": scan.scan_date.isoformat() if scan.scan_date else None,
@@ -473,6 +536,7 @@ def mark_false_positive(
         raise HTTPException(status_code=404, detail="Project not found")
 
     fp = crud.create_false_positive(db, project_id, unique_key)
+    crud.update_scan_findings_count(db, project_id, delta=-1)
     return {"success": True, "false_positive_id": fp.id, "unique_key": unique_key}
 
 
@@ -486,7 +550,7 @@ def get_false_positives_list(
     return [{"id": fp.id, "unique_key": fp.unique_key, "marked_at": fp.marked_at} for fp in fps]
 
 
-@router.delete("/projects/{project_id}/false-positives/{unique_key}")
+@router.delete("/projects/{project_id}/false-positives")
 def unmark_false_positive(
     project_id: int,
     unique_key: str,
@@ -494,10 +558,41 @@ def unmark_false_positive(
     db: Session = Depends(get_db)
 ):
     crud.delete_false_positive(db, project_id, unique_key)
+    crud.update_scan_findings_count(db, project_id, delta=+1)
     return {"success": True}
 
 
 # ==================== GLOBAL CONFIGURATION ENDPOINTS ====================
+
+# NOTE: these specific routes MUST be declared before the wildcard /{key} handlers below.
+
+@router.get("/configurations/global/pr-checks")
+def get_global_pr_check_config(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    return crud.get_global_pr_config(db)
+
+
+@router.put("/configurations/global/pr-checks")
+def save_global_pr_check_config(
+    payload: dict = Body(...),
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db),
+):
+    enabled = bool(payload.get("enabled", False))
+    severity = payload.get("block_on_severity", "none")
+    secret = payload.get("webhook_secret", "")
+
+    if severity not in ("none", "INFO", "WARNING", "ERROR"):
+        raise HTTPException(status_code=400,
+                            detail="block_on_severity must be none, INFO, WARNING, or ERROR")
+
+    if enabled and not secret:
+        secret = secrets.token_hex(32)
+
+    return crud.save_global_pr_config(db, enabled, severity, secret)
+
 
 @router.get("/configurations/global/{key}")
 def get_global_config(
