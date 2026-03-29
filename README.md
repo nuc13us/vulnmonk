@@ -25,14 +25,18 @@ Then edit `backend/.env`:
 JWT_SECRET_KEY=your-secret-key-here
 JWT_EXPIRE_DAYS=30
 
-# GitHub OAuth — required only if you want to use the GitHub integration
-# See GITHUB_OAUTH_SETUP.md for step-by-step instructions
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-GITHUB_REDIRECT_URI=http://YOUR_SERVER_IP_OR_DOMAIN:3000/integrations
+# GitHub App — required for PR scan checks and private repo access
+# See https://github.com/settings/apps to create your GitHub App
+GITHUB_APP_ID=
+GITHUB_APP_SLUG=
+GITHUB_APP_PRIVATE_KEY=backend/your-app.private-key.pem
+
+# Frontend URL (used for GitHub App OAuth callback)
+FRONTEND_URL=http://localhost:3000
+CORS_ORIGINS=http://localhost:3000
 ```
 
-> **GitHub OAuth setup:** See [GITHUB_OAUTH_SETUP.md](GITHUB_OAUTH_SETUP.md) for a step-by-step guide on creating a GitHub OAuth App and getting the `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` values.
+> **GitHub App setup:** Create a GitHub App at https://github.com/settings/apps. Set the Webhook URL to `YOUR_SERVER_URL/webhooks/github`. Download the private key `.pem` file and place it in the `backend/` directory.
 
 ---
 
@@ -69,6 +73,12 @@ python3 add_user.py <username> <password> admin
 ```bash
 docker compose up --build
 ```
+
+> **If you get a `Module not found` build error**, Docker may be using a stale cache layer. Force a clean build:
+> ```bash
+> docker compose build --no-cache
+> docker compose up
+> ```
 
 Data is persisted in Docker named volumes (`vulnmonk-data`, `vulnmonk-projects`).
 

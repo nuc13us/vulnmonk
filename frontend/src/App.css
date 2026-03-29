@@ -244,6 +244,16 @@ body {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* Make findings table rows show click intent */
+table tbody tr[title="Click to view details"]:hover {
+  background: #f0f7ff !important;
+}
 .status-text {
   font-size: 0.85rem;
   color: #94a3b8;

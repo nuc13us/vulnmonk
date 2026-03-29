@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   getGitHubIntegrations,
   getGitHubAppInstallUrl,
@@ -12,6 +13,9 @@ import {
 } from "../api";
 
 function Integrations() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Capture installation_id from GitHub's redirect callback on initial render only
+  const [initialInstallationId] = useState(() => searchParams.get("installation_id"));
   const [integrations, setIntegrations] = useState([]);
   const [selectedIntegration, setSelectedIntegration] = useState(null);
   const [repositories, setRepositories] = useState([]);
@@ -65,9 +69,30 @@ function Integrations() {
 
   useEffect(() => {
     loadUser();
-    loadIntegrations();
     loadGlobalPrConfig();
-  }, [loadUser, loadIntegrations, loadGlobalPrConfig]);
+
+    if (initialInstallationId) {
+      // GitHub redirected back after App installation — strip the URL param and auto-sync
+      setSearchParams({}, { replace: true });
+      addLog("info", `GitHub App installation detected (ID: ${initialInstallationId}). Syncing...`);
+      setLoading(true);
+      syncGitHubAppInstallations()
+        .then(result => {
+          if (result.count > 0) {
+            addLog("info", `Synced ${result.count} installation(s): ${result.synced.join(", ")}`);
+          } else {
+            addLog("warn", "Sync returned no installations. The App may not be fully installed yet.");
+          }
+        })
+        .catch(err => {
+          addLog("warn", "Auto-sync skipped: " + err.message);
+        })
+        .finally(() => loadIntegrations());
+    } else {
+      loadIntegrations();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadUser, loadIntegrations, loadGlobalPrConfig, setSearchParams]);
 
   const handleRefresh = async () => {
     try {

@@ -23,8 +23,14 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 
 # Copy application code
 COPY backend/ backend/
+
+# Copy utility scripts
 COPY add_user.py .
 COPY view_db.py .
+
+# Copy GitHub App private key if it exists (handles both .pem and .private-key.pem)
+# This step is optional - if the file doesn't exist, the build will continue
+# Note: Docker COPY doesn't support conditional copying, so we handle this via env vars instead
 
 # Database and scanned repos live on a mounted volume
 ENV DATABASE_PATH=/data/vulnmonk.db

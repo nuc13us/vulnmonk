@@ -10,7 +10,7 @@ services:
     # ports:
     #   - "8000:8000"
     env_file:
-      - path: ./backend/.env
+      - path: backend/.env
         required: false        # skip gracefully if file doesn't exist
     environment:
       - DATABASE_PATH=/data/vulnmonk.db
@@ -19,6 +19,7 @@ services:
       # Behind nginx proxy: allow all origins (browser requests are same-origin via nginx).
       # Override in backend/.env with specific origins for non-Docker setups.
       - CORS_ORIGINS=*
+      # GitHub App credentials are loaded from backend/.env via env_file above
     volumes:
       - vulnmonk-data:/data          # SQLite database
       - vulnmonk-projects:/app/projects  # Cloned repos

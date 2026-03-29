@@ -13,6 +13,228 @@ function formatDate(dateStr) {
   });
 }
 
+// ─── Finding Detail Drawer ────────────────────────────────────────────────────
+function FindingDrawer({ finding, onClose, onMarkFP, onUnmarkFP, isAdmin }) {
+  const [activeTab, setActiveTab] = useState('overview');
+
+  useEffect(() => {
+    setActiveTab('overview');
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [finding, onClose]);
+
+  if (!finding) return null;
+
+  const meta   = finding.extra?.metadata || {};
+  const sev    = finding.extra?.severity  || '';
+  const isFP   = finding.status === 'false_positive';
+
+  const sevColor = (s) => {
+    const l = (s || '').toLowerCase();
+    if (l === 'error')   return { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' };
+    if (l === 'warning') return { bg: '#fffbeb', color: '#d97706', border: '#fde68a' };
+    return                      { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' };
+  };
+  const sc = sevColor(sev);
+
+  const Tab = ({ id, label }) => (
+    <button
+      onClick={() => setActiveTab(id)}
+      style={{
+        padding: '7px 16px', border: 'none', cursor: 'pointer', fontSize: '0.85rem',
+        borderBottom: activeTab === id ? '2px solid #2563eb' : '2px solid transparent',
+        marginBottom: '-2px', background: 'transparent',
+        fontWeight: activeTab === id ? 700 : 400,
+        color: activeTab === id ? '#2563eb' : '#64748b',
+      }}
+    >{label}</button>
+  );
+
+  const Row = ({ label, children }) => (
+    <div style={{ display: 'flex', gap: '12px', padding: '8px 0', borderBottom: '1px solid #f1f5f9', alignItems: 'flex-start' }}>
+      <span style={{ minWidth: '130px', fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em', paddingTop: '2px' }}>{label}</span>
+      <span style={{ fontSize: '0.875rem', color: '#1e293b', flex: 1, wordBreak: 'break-word' }}>{children || '—'}</span>
+    </div>
+  );
+
+  const Pill = ({ text, bg = '#f1f5f9', color = '#334155' }) => (
+    <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: 600, background: bg, color, marginRight: '6px', marginBottom: '4px' }}>
+      {text}
+    </span>
+  );
+
+  return (
+    <>
+      {/* backdrop */}
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.25)', zIndex: 900 }} />
+
+      {/* drawer */}
+      <div style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, width: 'min(560px, 90vw)',
+        background: '#fff', zIndex: 901, display: 'flex', flexDirection: 'column',
+        boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
+        animation: 'slideInRight 0.22s ease',
+      }}>
+
+        {/* header */}
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
+              <span style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 700,
+                background: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}>
+                {sev}
+              </span>
+              {isFP && <span style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 700, background: '#f1f5f9', color: '#64748b' }}>False Positive</span>}
+            </div>
+            <div style={{ fontSize: '0.82rem', color: '#64748b', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              {finding.path}:{finding.start?.line}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.4rem', color: '#94a3b8', padding: '0 4px', lineHeight: 1 }}>×</button>
+        </div>
+
+        {/* tabs */}
+        <div style={{ display: 'flex', borderBottom: '2px solid #e5e7eb', paddingLeft: '12px', flexShrink: 0 }}>
+          <Tab id="overview"   label="Overview" />
+          <Tab id="details"    label="Details" />
+          <Tab id="references" label="References" />
+          {finding.extra?.fix && <Tab id="fix" label="Fix" />}
+        </div>
+
+        {/* body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+
+          {activeTab === 'overview' && (
+            <div>
+              <div style={{ padding: '14px 16px', background: sc.bg, border: `1px solid ${sc.border}`,
+                borderRadius: '8px', marginBottom: '16px', fontSize: '0.875rem', color: '#1e293b', lineHeight: 1.6 }}>
+                {finding.extra?.message}
+              </div>
+              <Row label="Rule ID">
+                <span style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>{finding.check_id}</span>
+              </Row>
+              <Row label="File">
+                <span style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>{finding.path}</span>
+              </Row>
+              <Row label="Location">Line {finding.start?.line}, Col {finding.start?.col}</Row>
+              <Row label="Severity">
+                <span style={{ fontWeight: 700, color: sc.color }}>{sev}</span>
+              </Row>
+              <Row label="Confidence">{meta.confidence}</Row>
+              <Row label="Category">{meta.category}</Row>
+              {finding.extra?.lines && (
+                <div style={{ marginTop: '12px' }}>
+                  <div style={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '6px' }}>Matched Code</div>
+                  <pre style={{ background: '#0f172a', color: '#e2e8f0', padding: '12px 16px', borderRadius: '8px',
+                    fontSize: '0.82rem', overflowX: 'auto', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    {finding.extra.lines}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'details' && (
+            <div>
+              {(() => {
+                // Normalize any field that may be a string or array into always an array
+                const toArr = (v) => !v ? [] : Array.isArray(v) ? v : [v];
+                const vulClasses = toArr(meta.vulnerability_class);
+                const cwes       = toArr(meta.cwe);
+                const owasps     = toArr(meta.owasp);
+                const techs      = toArr(meta.technology);
+                const subcats    = toArr(meta.subcategory);
+                return (<>
+                  <Row label="Vulnerability Class">
+                    <div>{vulClasses.map((c, i) => <Pill key={i} text={c} bg="#ede9fe" color="#5b21b6" />)}</div>
+                  </Row>
+                  <Row label="CWE">
+                    <div>{cwes.map((c, i) => <Pill key={i} text={c} bg="#fef3c7" color="#92400e" />)}</div>
+                  </Row>
+                  <Row label="OWASP">
+                    <div>{owasps.map((o, i) => <Pill key={i} text={o} bg="#ecfdf5" color="#065f46" />)}</div>
+                  </Row>
+                  <Row label="Technology">
+                    <div>{techs.map((t, i) => <Pill key={i} text={t} />)}</div>
+                  </Row>
+                  <Row label="Subcategory">
+                    <div>{subcats.map((s, i) => <Pill key={i} text={s} />)}</div>
+                  </Row>
+                  <Row label="Likelihood">{meta.likelihood}</Row>
+                  <Row label="Impact">{meta.impact}</Row>
+                  <Row label="Engine">{finding.extra?.engine_kind}</Row>
+                  <Row label="Fingerprint">
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', wordBreak: 'break-all' }}>{finding.extra?.fingerprint}</span>
+                  </Row>
+                </>);
+              })()}
+            </div>
+          )}
+
+          {activeTab === 'references' && (
+            <div>
+              {meta.source && (
+                <Row label="Rule Source">
+                  <a href={meta.source} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', wordBreak: 'break-all' }}>{meta.source}</a>
+                </Row>
+              )}
+              {meta.shortlink && (
+                <Row label="Short Link">
+                  <a href={meta.shortlink} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb' }}>{meta.shortlink}</a>
+                </Row>
+              )}
+              {(meta.references || []).length > 0 && (
+                <Row label="References">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {meta.references.map((r, i) => (
+                      <a key={i} href={r} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', wordBreak: 'break-all' }}>{r}</a>
+                    ))}
+                  </div>
+                </Row>
+              )}
+              {meta.license && (
+                <Row label="License">
+                  <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>{meta.license}</span>
+                </Row>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'fix' && finding.extra?.fix && (
+            <div>
+              <div style={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Suggested Fix</div>
+              <pre style={{ background: '#0f172a', color: '#86efac', padding: '16px', borderRadius: '8px',
+                fontSize: '0.85rem', overflowX: 'auto', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: 1.6 }}>
+                {finding.extra.fix}
+              </pre>
+            </div>
+          )}
+
+        </div>
+
+        {/* footer actions */}
+        {isAdmin && (
+          <div style={{ padding: '12px 20px', borderTop: '1px solid #e5e7eb', display: 'flex', gap: '8px' }}>
+            {isFP ? (
+              <button className="secondary" style={{ fontSize: '0.85rem', padding: '7px 16px' }}
+                onClick={() => { onUnmarkFP(finding.unique_key); onClose(); }}>
+                Remove from False Positives
+              </button>
+            ) : (
+              <button className="secondary" style={{ fontSize: '0.85rem', padding: '7px 16px' }}
+                onClick={() => { onMarkFP(finding.unique_key); onClose(); }}>
+                Mark as False Positive
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function ScanResults({ project, user }) {
   const [activeTab, setActiveTab] = useState("full"); // "full" | "pr"
   const [scanHistory, setScanHistory] = useState([]);
@@ -21,6 +243,7 @@ export default function ScanResults({ project, user }) {
   const [logs, setLogs] = useState([]);
   const [showFalsePositives, setShowFalsePositives] = useState(false);
   const [showLogs, setShowLogs] = useState(true);
+  const [selectedFinding, setSelectedFinding] = useState(null);
   const pollRef = useRef(null);
 
   // PR scans state
@@ -466,10 +689,10 @@ export default function ScanResults({ project, user }) {
                       : vul.extra?.metadata?.vulnerability_class || '';
                     
                     return (
-                      <tr key={idx}>
+                      <tr key={idx} onClick={() => setSelectedFinding(vul)} style={{ cursor: 'pointer' }} title="Click to view details">
                         <td>
                           {githubUrl ? (
-                            <a href={githubUrl} target="_blank" rel="noopener noreferrer" className="github-link">
+                            <a href={githubUrl} target="_blank" rel="noopener noreferrer" className="github-link" onClick={e => e.stopPropagation()}>
                               {vul.path}
                             </a>
                           ) : (
@@ -479,7 +702,7 @@ export default function ScanResults({ project, user }) {
                         <td>{vul.start?.line}</td>
                         <td>
                           {semgrepUrl && vulClass ? (
-                            <a href={semgrepUrl} target="_blank" rel="noopener noreferrer" className="github-link">
+                            <a href={semgrepUrl} target="_blank" rel="noopener noreferrer" className="github-link" onClick={e => e.stopPropagation()}>
                               {vulClass}
                             </a>
                           ) : (
@@ -490,7 +713,7 @@ export default function ScanResults({ project, user }) {
                         <td><span className="badge" style={{ background: "#10b981" }}>{vul.status || "open"}</span></td>
                         <td>
                           <button 
-                            onClick={() => handleMarkFalsePositive(vul.unique_key)}
+                            onClick={(e) => { e.stopPropagation(); handleMarkFalsePositive(vul.unique_key); }}
                             style={{ padding: "6px 12px", fontSize: "0.85rem" }}
                             className="secondary"
                             disabled={!isAdmin}
@@ -531,12 +754,12 @@ export default function ScanResults({ project, user }) {
                       : vul.extra?.metadata?.vulnerability_class || '';
                     
                     return (
-                      <tr key={idx} style={{ background: "#fef2f2" }}>
+                      <tr key={idx} style={{ background: "#fef2f2", cursor: 'pointer' }} onClick={() => setSelectedFinding(vul)} title="Click to view details">
                         <td>{vul.path}</td>
                         <td>{vul.start?.line}</td>
                         <td>
                           {semgrepUrl && vulClass ? (
-                            <a href={semgrepUrl} target="_blank" rel="noopener noreferrer" className="github-link">
+                            <a href={semgrepUrl} target="_blank" rel="noopener noreferrer" className="github-link" onClick={e => e.stopPropagation()}>
                               {vulClass}
                             </a>
                           ) : (
@@ -547,7 +770,7 @@ export default function ScanResults({ project, user }) {
                         <td><span className="badge" style={{ background: "#64748b" }}>False Positive</span></td>
                         <td>
                           <button
-                            onClick={() => handleUnmarkFalsePositive(vul.unique_key)}
+                            onClick={(e) => { e.stopPropagation(); handleUnmarkFalsePositive(vul.unique_key); }}
                             style={{ padding: "6px 12px", fontSize: "0.85rem" }}
                             className="secondary"
                             disabled={!isAdmin}
@@ -657,16 +880,16 @@ export default function ScanResults({ project, user }) {
                         : vul.extra?.metadata?.vulnerability_class || '';
                       const githubUrl = buildGitHubUrl(vul.path, vul.start?.line);
                       return (
-                        <tr key={idx}>
+                        <tr key={idx} onClick={() => setSelectedFinding(vul)} style={{ cursor: 'pointer' }} title="Click to view details">
                           <td>
                             {githubUrl
-                              ? <a href={githubUrl} target="_blank" rel="noopener noreferrer" className="github-link">{vul.path}</a>
+                              ? <a href={githubUrl} target="_blank" rel="noopener noreferrer" className="github-link" onClick={e => e.stopPropagation()}>{vul.path}</a>
                               : vul.path}
                           </td>
                           <td>{vul.start?.line}</td>
                           <td>
                             {semgrepUrl && vulClass
-                              ? <a href={semgrepUrl} target="_blank" rel="noopener noreferrer" className="github-link">{vulClass}</a>
+                              ? <a href={semgrepUrl} target="_blank" rel="noopener noreferrer" className="github-link" onClick={e => e.stopPropagation()}>{vulClass}</a>
                               : vulClass}
                           </td>
                           <td><span className={badgeColor(vul.extra?.severity)}>{vul.extra?.severity}</span></td>
@@ -681,6 +904,15 @@ export default function ScanResults({ project, user }) {
         </div>
       )}
 
+      <FindingDrawer
+        finding={selectedFinding}
+        onClose={() => setSelectedFinding(null)}
+        onMarkFP={handleMarkFalsePositive}
+        onUnmarkFP={handleUnmarkFalsePositive}
+        isAdmin={isAdmin}
+      />
+
     </div>
   );
 }
+
