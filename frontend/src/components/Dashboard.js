@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 
-export default function Dashboard({ projects, totalProjects = 0, totalVulnerabilities = 0, onSelectProject, onNavigate }) {
+export default function Dashboard({ projects, totalProjects = 0, totalVulnerabilities = 0, totalSecrets = 0, onSelectProject, onNavigate }) {
   const [stats, setStats] = useState({
     totalProjects: 0,
     totalVulnerabilities: 0,
+    totalSecrets: 0,
     recentScans: [],
     projectsWithScans: new Map()
   });
@@ -47,10 +48,11 @@ export default function Dashboard({ projects, totalProjects = 0, totalVulnerabil
     setStats({
       totalProjects: totalProjects > 0 ? totalProjects : (projects ? projects.length : 0),
       totalVulnerabilities,
+      totalSecrets,
       recentScans,
       projectsWithScans
     });
-  }, [projects, totalProjects, totalVulnerabilities]);
+  }, [projects, totalProjects, totalVulnerabilities, totalSecrets]);
 
   return (
     <div className="dashboard-view">
@@ -73,6 +75,14 @@ export default function Dashboard({ projects, totalProjects = 0, totalVulnerabil
           <div className="stat-content">
             <div className="stat-number">{stats.totalVulnerabilities}</div>
             <div className="stat-label">Total Vulnerabilities</div>
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-icon">🔑</div>
+          <div className="stat-content">
+            <div className="stat-number">{stats.totalSecrets}</div>
+            <div className="stat-label">Total Secrets</div>
           </div>
         </div>
 

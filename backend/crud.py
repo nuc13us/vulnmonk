@@ -199,6 +199,79 @@ def get_github_integration_by_installation_id(db: Session, installation_id: int)
     ).first()
 
 
+# ==================== TRUFFLEHOG CRUD ====================
+
+def create_trufflehog_scan_result(db: Session, scan: schemas.TrufflehogScanResultCreate,
+                                   project_id: int, findings_count: int = None):
+    data = scan.dict()
+    data["project_id"] = project_id
+    if not data.get("scan_date"):
+        data["scan_date"] = datetime.utcnow()
+    if findings_count is not None:
+        data["findings_count"] = findings_count
+    db_scan = models.TrufflehogScanResult(**data)
+    db.add(db_scan)
+    db.commit()
+    db.refresh(db_scan)
+    cleanup_old_trufflehog_scans(db, project_id, keep_count=20)
+    return db_scan
+
+
+def cleanup_old_trufflehog_scans(db: Session, project_id: int, keep_count: int = 20):
+    all_scans = db.query(models.TrufflehogScanResult).filter(
+        models.TrufflehogScanResult.project_id == project_id
+    ).order_by(models.TrufflehogScanResult.scan_date.desc()).all()
+    if len(all_scans) > keep_count:
+        scans_to_delete = all_scans[keep_count:]
+        for scan in scans_to_delete:
+            db.delete(scan)
+        db.commit()
+
+
+def get_trufflehog_scan_results(db: Session, project_id: int, skip: int = 0, limit: int = 100):
+    return db.query(models.TrufflehogScanResult).filter(
+        models.TrufflehogScanResult.project_id == project_id
+    ).order_by(models.TrufflehogScanResult.scan_date.desc()).offset(skip).limit(limit).all()
+
+
+def update_trufflehog_scan_findings_count(db: Session, project_id: int, delta: int):
+    scan = db.query(models.TrufflehogScanResult).filter(
+        models.TrufflehogScanResult.project_id == project_id
+    ).order_by(models.TrufflehogScanResult.scan_date.desc()).first()
+    if scan and scan.findings_count is not None:
+        scan.findings_count = max(0, scan.findings_count + delta)
+        db.commit()
+
+
+def create_trufflehog_false_positive(db: Session, project_id: int, unique_key: str):
+    existing = db.query(models.TrufflehogFalsePositive).filter(
+        models.TrufflehogFalsePositive.project_id == project_id,
+        models.TrufflehogFalsePositive.unique_key == unique_key
+    ).first()
+    if existing:
+        return existing
+    db_fp = models.TrufflehogFalsePositive(project_id=project_id, unique_key=unique_key)
+    db.add(db_fp)
+    db.commit()
+    db.refresh(db_fp)
+    return db_fp
+
+
+def get_trufflehog_false_positives(db: Session, project_id: int):
+    return db.query(models.TrufflehogFalsePositive).filter(
+        models.TrufflehogFalsePositive.project_id == project_id
+    ).all()
+
+
+def delete_trufflehog_false_positive(db: Session, project_id: int, unique_key: str):
+    db.query(models.TrufflehogFalsePositive).filter(
+        models.TrufflehogFalsePositive.project_id == project_id,
+        models.TrufflehogFalsePositive.unique_key == unique_key
+    ).delete()
+    db.commit()
+    return True
+
+
 def create_or_update_app_installation(
     db: Session,
     installation_id: int,
@@ -264,7 +337,7 @@ def get_project_and_severity_for_pr(db: Session, repo_full_name: str):
             break
 
     if not matched_project:
-        return None, None
+        return None, None, None
 
     cfg = db.query(models.PRCheckConfig).filter(
         models.PRCheckConfig.project_id == matched_project.id
@@ -273,13 +346,13 @@ def get_project_and_severity_for_pr(db: Session, repo_full_name: str):
     # Per-project enabled=1 means the project uses its own custom settings.
     # Per-project enabled=0 (or no row) means "defer to global" — fall through.
     if cfg and cfg.enabled == 1:
-        return matched_project, cfg.block_on_severity or "none"
+        return matched_project, cfg.block_on_severity or "none", cfg.th_block_on or "none"
 
     # No per-project config, or per-project is set to inherit global — check global setting
     g = get_global_pr_config(db)
     if not g["enabled"]:
-        return None, None
-    return matched_project, g["block_on_severity"] or "none"
+        return None, None, None
+    return matched_project, g["block_on_severity"] or "none", g["th_block_on"] or "none"
 
 def delete_github_integration(db: Session, integration_id: int):
     """Delete a GitHub integration"""
@@ -307,7 +380,8 @@ def get_pr_check_config(db: Session, project_id: int):
 
 
 def save_pr_check_config(db: Session, project_id: int, enabled: bool,
-                         webhook_secret: str, block_on_severity: str):
+                         webhook_secret: str, block_on_severity: str,
+                         th_block_on: str = "none"):
     """Create or update PR check config."""
     config = db.query(models.PRCheckConfig).filter(
         models.PRCheckConfig.project_id == project_id
@@ -316,6 +390,7 @@ def save_pr_check_config(db: Session, project_id: int, enabled: bool,
         config.enabled = 1 if enabled else 0
         config.webhook_secret = webhook_secret
         config.block_on_severity = block_on_severity
+        config.th_block_on = th_block_on
         config.updated_at = datetime.utcnow()
     else:
         config = models.PRCheckConfig(
@@ -323,6 +398,7 @@ def save_pr_check_config(db: Session, project_id: int, enabled: bool,
             enabled=1 if enabled else 0,
             webhook_secret=webhook_secret,
             block_on_severity=block_on_severity,
+            th_block_on=th_block_on,
         )
         db.add(config)
     db.commit()
@@ -339,19 +415,23 @@ def get_global_pr_config(db: Session) -> dict:
         "enabled": _val("global_pr_checks_enabled", "0") == "1",
         "block_on_severity": _val("global_pr_checks_severity", "none"),
         "webhook_secret": _val("global_pr_checks_secret", ""),
+        "th_block_on": _val("global_pr_checks_th_block_on", "none"),
     }
 
 
 def save_global_pr_config(db: Session, enabled: bool,
-                          block_on_severity: str, webhook_secret: str) -> dict:
+                          block_on_severity: str, webhook_secret: str,
+                          th_block_on: str = "none") -> dict:
     """Persist global PR check settings into GlobalConfiguration rows."""
     update_global_config(db, "global_pr_checks_enabled", "1" if enabled else "0")
     update_global_config(db, "global_pr_checks_severity", block_on_severity)
     update_global_config(db, "global_pr_checks_secret", webhook_secret)
+    update_global_config(db, "global_pr_checks_th_block_on", th_block_on)
     return {
         "enabled": enabled,
         "block_on_severity": block_on_severity,
         "webhook_secret": webhook_secret,
+        "th_block_on": th_block_on,
     }
 
 

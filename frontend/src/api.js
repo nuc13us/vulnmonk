@@ -417,11 +417,11 @@ export async function getPRCheckConfig(projectId) {
   return res.json();
 }
 
-export async function savePRCheckConfig(projectId, { enabled, webhook_secret, block_on_severity }) {
+export async function savePRCheckConfig(projectId, { enabled, webhook_secret, block_on_severity, th_block_on }) {
   const res = await apiFetch(`${API_BASE}/projects/${projectId}/pr-check-config`, {
     method: "PUT",
     headers: getHeaders(),
-    body: JSON.stringify({ enabled, webhook_secret, block_on_severity })
+    body: JSON.stringify({ enabled, webhook_secret, block_on_severity, th_block_on: th_block_on || "none" })
   });
   if (!res.ok) {
     const err = await res.json();
@@ -454,15 +454,80 @@ export async function getGlobalPRCheckConfig() {
   return res.json();
 }
 
-export async function saveGlobalPRCheckConfig({ enabled, block_on_severity, webhook_secret }) {
+export async function saveGlobalPRCheckConfig({ enabled, block_on_severity, webhook_secret, th_block_on }) {
   const res = await apiFetch(`${API_BASE}/configurations/global/pr-checks`, {
     method: "PUT",
     headers: getHeaders(),
-    body: JSON.stringify({ enabled, block_on_severity, webhook_secret })
+    body: JSON.stringify({ enabled, block_on_severity, webhook_secret, th_block_on: th_block_on || "none" })
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Failed to save global PR config");
+  }
+  return res.json();
+}
+
+// ==================== TRUFFLEHOG ENDPOINTS ====================
+
+export async function triggerTrufflehogScan(projectId) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/trufflehog/scan/`, {
+    method: "POST",
+    headers: getHeaders()
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ detail: "TruffleHog scan failed" }));
+    throw new Error(errorData.detail || `TruffleHog scan failed with status ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getTrufflehogScanStatus(projectId) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/trufflehog/scan/status`, {
+    headers: getHeaders()
+  });
+  return res.json();
+}
+
+export async function getTrufflehogScans(projectId) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/trufflehog/scans/`, {
+    headers: getHeaders()
+  });
+  return res.json();
+}
+
+export async function getTrufflehogScanDetail(scanId) {
+  const res = await apiFetch(`${API_BASE}/trufflehog/scans/${scanId}/`, {
+    headers: getHeaders()
+  });
+  return res.json();
+}
+
+export async function markTrufflehogFalsePositive(projectId, uniqueKey) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/trufflehog/false-positives/`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ unique_key: uniqueKey })
+  });
+  return res.json();
+}
+
+export async function unmarkTrufflehogFalsePositive(projectId, uniqueKey) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/trufflehog/false-positives?unique_key=${encodeURIComponent(uniqueKey)}`, {
+    method: "DELETE",
+    headers: getHeaders()
+  });
+  return res.json();
+}
+
+export async function updateTrufflehogExcludeDetectors(projectId, detectors) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/trufflehog/exclude_detectors/`, {
+    method: "PUT",
+    headers: getHeaders(),
+    body: JSON.stringify(detectors)
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || "Failed to update TruffleHog exclude detectors");
   }
   return res.json();
 }

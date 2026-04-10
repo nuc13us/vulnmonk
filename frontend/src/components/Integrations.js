@@ -31,6 +31,7 @@ function Integrations() {
   const [hasNextPage, setHasNextPage] = useState(false);
   const [globalPrEnabled, setGlobalPrEnabled] = useState(false);
   const [globalPrSeverity, setGlobalPrSeverity] = useState("none");
+  const [globalPrThBlockOn, setGlobalPrThBlockOn] = useState("none");
   const [savingPrEnabled, setSavingPrEnabled] = useState(false);
 
   const loadUser = useCallback(async () => {
@@ -62,6 +63,7 @@ function Integrations() {
       const cfg = await getGlobalPRCheckConfig();
       setGlobalPrEnabled(cfg.enabled || false);
       setGlobalPrSeverity(cfg.block_on_severity || "none");
+      setGlobalPrThBlockOn(cfg.th_block_on || "none");
     } catch (error) {
       // Non-critical — default to false
     }
@@ -305,7 +307,7 @@ function Integrations() {
     setSavingPrEnabled(true);
     try {
       const cfg = await getGlobalPRCheckConfig();
-      await saveGlobalPRCheckConfig({ ...cfg, enabled: newValue, block_on_severity: globalPrSeverity });
+      await saveGlobalPRCheckConfig({ ...cfg, enabled: newValue, block_on_severity: globalPrSeverity, th_block_on: globalPrThBlockOn });
       setGlobalPrEnabled(newValue);
       addLog("success", `PR scanning ${newValue ? "enabled" : "disabled"} for all imported projects`);
     } catch (error) {
@@ -320,7 +322,7 @@ function Integrations() {
     setSavingPrEnabled(true);
     try {
       const cfg = await getGlobalPRCheckConfig();
-      await saveGlobalPRCheckConfig({ ...cfg, enabled: globalPrEnabled, block_on_severity: globalPrSeverity });
+      await saveGlobalPRCheckConfig({ ...cfg, enabled: globalPrEnabled, block_on_severity: globalPrSeverity, th_block_on: globalPrThBlockOn });
       addLog("success", "PR scan settings saved");
     } catch (error) {
       addLog("error", "Failed to save PR scan settings: " + error.message);
@@ -611,6 +613,32 @@ function Integrations() {
                     <option value="INFO">Block on INFO, WARNING or ERROR</option>
                     <option value="WARNING">Block on WARNING or ERROR</option>
                     <option value="ERROR">Block on ERROR only</option>
+                  </select>
+                  <p style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: "4px" }}>
+                    Per-project settings override this default.
+                  </p>
+                </div>
+              )}
+
+              {/* Block on TruffleHog secrets */}
+              {globalPrEnabled && (
+                <div style={{ marginBottom: "20px" }}>
+                  <label style={{ display: "block", fontWeight: 600, fontSize: "0.9rem", marginBottom: "6px", color: "#374151" }}>
+                    Block PR on Secrets (TruffleHog)
+                  </label>
+                  <select
+                    value={globalPrThBlockOn}
+                    onChange={e => setGlobalPrThBlockOn(e.target.value)}
+                    disabled={!isAdmin}
+                    style={{
+                      padding: "8px 14px", borderRadius: "6px",
+                      border: "2px solid #e5e7eb", fontSize: "0.9rem",
+                      background: "#fff", cursor: isAdmin ? "pointer" : "not-allowed"
+                    }}
+                  >
+                    <option value="none">Don't block (report only)</option>
+                    <option value="verified">Block on Verified secrets only</option>
+                    <option value="all">Block on all secrets (verified + unverified)</option>
                   </select>
                   <p style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: "4px" }}>
                     Per-project settings override this default.

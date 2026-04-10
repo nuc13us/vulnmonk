@@ -27,6 +27,7 @@ router = APIRouter()
 
 # In-memory set of project IDs currently being scanned
 scanning_projects: set[int] = set()
+trufflehog_scanning_projects: set[int] = set()
 
 
 # ==================== HELPERS ====================
@@ -96,7 +97,11 @@ def process_scan_findings(scan_result, project_id, db):
     filtered_fps = []
 
     for finding in results:
-        unique_key = finding.get("unique_key") or generate_unique_key(finding)
+        # Always recompute the key from the finding's content rather than trusting
+        # any cached value in result_json.  Cached keys may be in an older format
+        # (e.g. path@line@rule_id) which would never match FP records that were
+        # stored after the key scheme changed to path@rule_id@content_hash.
+        unique_key = generate_unique_key(finding)
         finding["unique_key"] = unique_key
         if unique_key in fp_keys:
             finding["status"] = "false_positive"
@@ -274,8 +279,9 @@ def read_projects(
     # Fetch the latest scan summary for each project in one query instead of N lazy-loads
     project_ids = [p.id for p in projects]
     latest_scans = {}
+    latest_th_scans = {}
     if project_ids:
-        # Subquery: max scan_date per project
+        # Subquery: max scan_date per project (opengrep)
         sub = (
             db.query(
                 models.ScanResult.project_id,
@@ -297,10 +303,33 @@ def read_projects(
                 "findings_count": row.findings_count,
             }
 
+        # Subquery: max trufflehog scan per project
+        th_sub = (
+            db.query(
+                models.TrufflehogScanResult.project_id,
+                func.max(models.TrufflehogScanResult.id).label("max_id"),
+            )
+            .filter(models.TrufflehogScanResult.project_id.in_(project_ids))
+            .group_by(models.TrufflehogScanResult.project_id)
+            .subquery()
+        )
+        th_rows = (
+            db.query(models.TrufflehogScanResult)
+            .join(th_sub, models.TrufflehogScanResult.id == th_sub.c.max_id)
+            .all()
+        )
+        for row in th_rows:
+            latest_th_scans[row.project_id] = {
+                "id": row.id,
+                "scan_date": row.scan_date.isoformat() if row.scan_date else None,
+                "findings_count": row.findings_count,
+            }
+
     project_list = []
     for p in projects:
         item = schemas.Project.from_orm(p).dict()
         item["latest_scan"] = latest_scans.get(p.id)
+        item["latest_trufflehog_scan"] = latest_th_scans.get(p.id)
         project_list.append(item)
 
     # Compute total vulnerabilities across ALL projects (not just current page)
@@ -318,6 +347,21 @@ def read_projects(
         .scalar()
     )
 
+    # Compute total trufflehog secrets across ALL projects
+    th_latest_sub = (
+        db.query(
+            models.TrufflehogScanResult.project_id,
+            func.max(models.TrufflehogScanResult.id).label("max_id"),
+        )
+        .group_by(models.TrufflehogScanResult.project_id)
+        .subquery()
+    )
+    total_secrets_row = (
+        db.query(func.coalesce(func.sum(models.TrufflehogScanResult.findings_count), 0))
+        .join(th_latest_sub, models.TrufflehogScanResult.id == th_latest_sub.c.max_id)
+        .scalar()
+    )
+
     return {
         "projects": project_list,
         "page": page,
@@ -327,6 +371,7 @@ def read_projects(
         "has_next": page < total_pages,
         "has_prev": page > 1,
         "total_vulnerabilities": total_vulns_row or 0,
+        "total_secrets": total_secrets_row or 0,
     }
 
 
@@ -594,15 +639,20 @@ def save_global_pr_check_config(
     enabled = bool(payload.get("enabled", False))
     severity = payload.get("block_on_severity", "none")
     secret = payload.get("webhook_secret", "")
+    th_block_on = payload.get("th_block_on", "none")
 
     if severity not in ("none", "INFO", "WARNING", "ERROR"):
         raise HTTPException(status_code=400,
                             detail="block_on_severity must be none, INFO, WARNING, or ERROR")
 
+    if th_block_on not in ("none", "verified", "all"):
+        raise HTTPException(status_code=400,
+                            detail="th_block_on must be none, verified, or all")
+
     if enabled and not secret:
         secret = secrets.token_hex(32)
 
-    return crud.save_global_pr_config(db, enabled, severity, secret)
+    return crud.save_global_pr_config(db, enabled, severity, secret, th_block_on)
 
 
 @router.get("/configurations/global/{key}")
@@ -642,6 +692,18 @@ def update_global_config(
         if not validate_yaml_content(value):
             raise HTTPException(status_code=400, detail="Invalid YAML content. Please provide valid YAML format.")
 
+    if key == "global_trufflehog_exclude_detectors" and value and value.strip():
+        _DETECTOR_RE = re.compile(r'^[A-Za-z0-9_]+$')
+        invalid = [
+            d for d in value.split(",")
+            if d.strip() and not _DETECTOR_RE.match(d.strip())
+        ]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid detector names: {invalid}. Names may only contain letters, numbers, and underscores."
+            )
+
     config = crud.update_global_config(db, key, value)
     return {"key": config.key, "value": config.value}
 
@@ -653,7 +715,303 @@ def get_all_global_configs(
 ):
     global_exclude = crud.get_global_config(db, "global_exclude_rules")
     global_include = crud.get_global_config(db, "global_include_rules_yaml")
+    global_th_exclude = crud.get_global_config(db, "global_trufflehog_exclude_detectors")
     return {
         "global_exclude_rules": global_exclude.value if global_exclude else "",
         "global_include_rules_yaml": global_include.value if global_include else "",
+        "global_trufflehog_exclude_detectors": global_th_exclude.value if global_th_exclude else "",
     }
+
+
+# ==================== TRUFFLEHOG HELPERS ====================
+
+def generate_trufflehog_unique_key(finding):
+    """Generate unique key for a trufflehog finding: path@raw@detector."""
+    git_data = finding.get("SourceMetadata", {}).get("Data", {}).get("Git", {})
+    path = git_data.get("file", "unknown")
+    raw = finding.get("Raw", "")
+    detector = finding.get("DetectorName", "unknown")
+
+    normalized_raw = re.sub(r'\s+', ' ', raw.strip())
+    raw_hash = hashlib.sha256(normalized_raw.encode()).hexdigest()[:16]
+
+    return f"{path}@{raw_hash}@{detector}"
+
+
+def process_trufflehog_findings(findings_list, project_id, db):
+    """Separate findings into open vs false-positive."""
+    false_positives = crud.get_trufflehog_false_positives(db, project_id)
+    fp_keys = {fp.unique_key for fp in false_positives}
+
+    open_results = []
+    fp_results = []
+
+    for finding in findings_list:
+        unique_key = generate_trufflehog_unique_key(finding)
+        finding["unique_key"] = unique_key
+        if unique_key in fp_keys:
+            finding["status"] = "false_positive"
+            fp_results.append(finding)
+        else:
+            finding["status"] = "open"
+            open_results.append(finding)
+
+    return {"results": open_results, "false_positives": fp_results}
+
+
+def run_trufflehog_scan(repo_path, exclude_detectors_str=""):
+    """Run trufflehog scan and return parsed JSON findings list or {"error": ...}."""
+    try:
+        cmd = ["trufflehog", "git", f"file://{repo_path}", "--json"]
+
+        if exclude_detectors_str and exclude_detectors_str.strip():
+            cmd.append(f"--exclude-detectors={exclude_detectors_str.strip()}")
+
+        print(f"Running command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+        # trufflehog outputs one JSON per line
+        findings = []
+        summary = None
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                # Skip log lines (level/logger fields) and summary line
+                if "SourceMetadata" in obj:
+                    findings.append(obj)
+                elif "finished scanning" in obj.get("msg", ""):
+                    summary = obj
+            except json.JSONDecodeError:
+                continue
+
+        return {"findings": findings, "summary": summary}
+    except subprocess.TimeoutExpired:
+        return {"error": "TruffleHog scan timed out after 10 minutes"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ==================== TRUFFLEHOG ENDPOINTS ====================
+
+@router.put("/projects/{project_id}/trufflehog/exclude_detectors/")
+def update_trufflehog_exclude_detectors(
+    project_id: int,
+    detectors: list = Body(...),
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db)
+):
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    _DETECTOR_RE = re.compile(r'^[A-Za-z0-9_]+$')
+    invalid = [d for d in detectors if d and not _DETECTOR_RE.match(d.strip())]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid detector names: {invalid}. Names may only contain letters, numbers, and underscores."
+        )
+
+    project.trufflehog_exclude_detectors = ",".join(d.strip() for d in detectors if d.strip())
+    db.commit()
+    db.refresh(project)
+    return schemas.Project.from_orm(project)
+
+
+@router.get("/projects/{project_id}/trufflehog/scan/status")
+def get_trufflehog_scan_status(
+    project_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"scanning": project_id in trufflehog_scanning_projects}
+
+
+@router.post("/projects/{project_id}/trufflehog/scan/")
+def trigger_trufflehog_scan(
+    project_id: int,
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db)
+):
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project_id in trufflehog_scanning_projects:
+        raise HTTPException(status_code=409, detail="TruffleHog scan already in progress for this project")
+
+    trufflehog_scanning_projects.add(project_id)
+    raw_repo_name = project.github_url.rstrip("/").split("/")[-1].replace(".git", "")
+    repo_name = re.sub(r'[^A-Za-z0-9\-]', '-', raw_repo_name)
+    unique_id = str(uuid.uuid4())[:8]
+    temp_path = os.path.join(PROJECTS_ROOT, f"temp-th-{repo_name}-{unique_id}")
+
+    try:
+        clone_url = project.github_url
+
+        if project.integration_id:
+            integration = crud.get_github_integration(db, project.integration_id)
+            if integration and integration.access_token:
+                if clone_url.startswith("https://github.com/"):
+                    clone_url = clone_url.replace(
+                        "https://github.com/",
+                        f"https://{integration.access_token}@github.com/"
+                    )
+
+        subprocess.run(
+            ["git", "clone", "--depth", "1", clone_url, temp_path],
+            check=True, capture_output=True, text=True
+        )
+
+        # Merge global + project-specific exclude detectors
+        exclude_detectors = project.trufflehog_exclude_detectors or ""
+        global_th_config = crud.get_global_config(db, "global_trufflehog_exclude_detectors")
+        if global_th_config and global_th_config.value:
+            project_detectors = [d.strip() for d in exclude_detectors.split(",") if d.strip()]
+            global_detectors = [d.strip() for d in global_th_config.value.split(",") if d.strip()]
+            exclude_detectors = ",".join(set(project_detectors + global_detectors))
+
+        scan_result = run_trufflehog_scan(temp_path, exclude_detectors)
+
+        if isinstance(scan_result, dict) and "error" in scan_result:
+            raise HTTPException(status_code=500, detail=f"TruffleHog scan failed: {scan_result['error']}")
+
+        findings = scan_result.get("findings", [])
+
+        # Add unique keys
+        for finding in findings:
+            finding["unique_key"] = generate_trufflehog_unique_key(finding)
+            finding["status"] = "open"
+
+        # Compute open findings_count (total minus already-marked FPs)
+        fp_keys = {fp.unique_key for fp in crud.get_trufflehog_false_positives(db, project_id)}
+        raw_count = sum(1 for f in findings if generate_trufflehog_unique_key(f) not in fp_keys)
+
+        result_to_store = {"findings": findings, "summary": scan_result.get("summary")}
+        scan = schemas.TrufflehogScanResultCreate(result_json=result_to_store)
+        db_scan = crud.create_trufflehog_scan_result(db=db, scan=scan, project_id=project_id,
+                                                      findings_count=raw_count)
+
+        processed = process_trufflehog_findings(findings, project_id, db)
+        return {
+            "id": db_scan.id,
+            "project_id": db_scan.project_id,
+            "scan_date": db_scan.scan_date.isoformat() if db_scan.scan_date else None,
+            "result_json": {**processed, "summary": scan_result.get("summary")},
+        }
+
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Git clone failed: {e.stderr}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TruffleHog scan failed: {str(e)}")
+    finally:
+        trufflehog_scanning_projects.discard(project_id)
+        if os.path.exists(temp_path):
+            shutil.rmtree(temp_path, ignore_errors=True)
+
+
+@router.get("/projects/{project_id}/trufflehog/scans/")
+def read_trufflehog_scan_summaries(
+    project_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    scans = crud.get_trufflehog_scan_results(db, project_id=project_id, skip=skip, limit=limit)
+    summaries = []
+    for scan in scans:
+        if scan.findings_count is not None:
+            count = scan.findings_count
+        else:
+            fp_keys = {fp.unique_key for fp in crud.get_trufflehog_false_positives(db, project_id)}
+            count = 0
+            if scan.result_json and isinstance(scan.result_json, dict):
+                findings = scan.result_json.get("findings", [])
+                if isinstance(findings, list):
+                    for f in findings:
+                        if generate_trufflehog_unique_key(f) not in fp_keys:
+                            count += 1
+        summaries.append({
+            "id": scan.id,
+            "scan_date": scan.scan_date.isoformat() if scan.scan_date else None,
+            "findings_count": count,
+        })
+    return summaries
+
+
+@router.get("/trufflehog/scans/{scan_id}/")
+def get_trufflehog_scan_result(
+    scan_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    scan = db.query(models.TrufflehogScanResult).filter(
+        models.TrufflehogScanResult.id == scan_id
+    ).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="TruffleHog scan not found")
+
+    if scan.result_json:
+        findings = scan.result_json.get("findings", [])
+        processed = process_trufflehog_findings(findings, scan.project_id, db)
+        return {
+            "id": scan.id,
+            "project_id": scan.project_id,
+            "scan_date": scan.scan_date.isoformat() if scan.scan_date else None,
+            "result_json": {**processed, "summary": scan.result_json.get("summary")},
+        }
+
+    return {
+        "id": scan.id,
+        "project_id": scan.project_id,
+        "scan_date": scan.scan_date.isoformat() if scan.scan_date else None,
+        "result_json": scan.result_json,
+    }
+
+
+@router.post("/projects/{project_id}/trufflehog/false-positives/")
+def mark_trufflehog_false_positive(
+    project_id: int,
+    payload: dict,
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db)
+):
+    unique_key = payload.get("unique_key")
+    if not unique_key:
+        raise HTTPException(status_code=400, detail="unique_key required")
+
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    fp = crud.create_trufflehog_false_positive(db, project_id, unique_key)
+    crud.update_trufflehog_scan_findings_count(db, project_id, delta=-1)
+    return {"success": True, "false_positive_id": fp.id, "unique_key": unique_key}
+
+
+@router.get("/projects/{project_id}/trufflehog/false-positives/")
+def get_trufflehog_false_positives_list(
+    project_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    fps = crud.get_trufflehog_false_positives(db, project_id)
+    return [{"id": fp.id, "unique_key": fp.unique_key, "marked_at": fp.marked_at} for fp in fps]
+
+
+@router.delete("/projects/{project_id}/trufflehog/false-positives")
+def unmark_trufflehog_false_positive(
+    project_id: int,
+    unique_key: str,
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db)
+):
+    crud.delete_trufflehog_false_positive(db, project_id, unique_key)
+    crud.update_trufflehog_scan_findings_count(db, project_id, delta=+1)
+    return {"success": True}

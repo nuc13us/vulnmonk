@@ -77,6 +77,22 @@ class ScanResult(ScanResultBase):
         from_attributes = True
 
 
+# TruffleHog Schemas
+class TrufflehogScanResultBase(BaseModel):
+    scan_date: Optional[datetime] = None
+    result_json: dict
+
+class TrufflehogScanResultCreate(TrufflehogScanResultBase):
+    pass
+
+class TrufflehogScanResult(TrufflehogScanResultBase):
+    id: int
+    project_id: int
+    findings_count: Optional[int] = None
+    class Config:
+        from_attributes = True
+
+
 class ProjectBase(BaseModel):
     github_url: str
     local_path: Optional[str] = None
@@ -84,6 +100,7 @@ class ProjectBase(BaseModel):
     include_rules_yaml: str = ""
     apply_global_exclude: bool = False
     apply_global_include: bool = False
+    trufflehog_exclude_detectors: str = ""
 
 
 class ProjectCreate(BaseModel):
@@ -122,11 +139,17 @@ class LatestScan(BaseModel):
     findings_count: Optional[int] = None
 
 
+class LatestTrufflehogScan(BaseModel):
+    id: int
+    scan_date: Optional[datetime] = None
+    findings_count: Optional[int] = None
+
 class Project(ProjectBase):
     id: int
     created_at: datetime
     integration_id: Optional[int] = None
     latest_scan: Optional[LatestScan] = None
+    latest_trufflehog_scan: Optional[LatestTrufflehogScan] = None
     class Config:
         from_attributes = True
 
@@ -188,6 +211,7 @@ class PRCheckConfigOut(BaseModel):
     enabled: bool
     webhook_secret: Optional[str] = None
     block_on_severity: str  # none | INFO | WARNING | ERROR
+    th_block_on: str = "none"  # none | verified | all
 
     class Config:
         from_attributes = True
@@ -199,6 +223,7 @@ class PRCheckConfigOut(BaseModel):
             enabled=bool(obj.enabled),
             webhook_secret=obj.webhook_secret,
             block_on_severity=obj.block_on_severity or "none",
+            th_block_on=obj.th_block_on or "none",
         )
 
 
@@ -206,6 +231,7 @@ class PRCheckConfigUpdate(BaseModel):
     enabled: bool
     webhook_secret: Optional[str] = None
     block_on_severity: str = "none"
+    th_block_on: str = "none"  # none | verified | all
 
 
 # PR Scan Result Schemas

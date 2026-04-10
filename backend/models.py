@@ -14,6 +14,7 @@ class Project(Base):
     include_rules_yaml = Column(String, default="")  # YAML content for include rules
     apply_global_exclude = Column(Integer, default=0)  # Apply global exclude rules (disabled by default)
     apply_global_include = Column(Integer, default=0)  # Apply global include rules (disabled by default)
+    trufflehog_exclude_detectors = Column(String, default="")  # Comma-separated detector names
     integration_id = Column(Integer, ForeignKey('github_integrations.id'), nullable=True)  # Link to GitHub integration for authenticated cloning
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     scans = relationship("ScanResult", back_populates="project")
@@ -80,8 +81,29 @@ class PRCheckConfig(Base):
     enabled = Column(Integer, default=0)
     webhook_secret = Column(String, nullable=True) # Legacy / unused with GitHub App
     block_on_severity = Column(String, default="none")  # none | INFO | WARNING | ERROR
+    th_block_on = Column(String, default="none")  # none | verified | all
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class TrufflehogScanResult(Base):
+    __tablename__ = 'trufflehog_scan_results'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'))
+    scan_date = Column(DateTime, default=datetime.datetime.utcnow)
+    result_json = Column(JSON)
+    findings_count = Column(Integer, nullable=True, default=None)
+    project = relationship("Project", backref="trufflehog_scans")
+
+class TrufflehogFalsePositive(Base):
+    __tablename__ = 'trufflehog_false_positives'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'))
+    unique_key = Column(String, index=True)  # path@raw@detector
+    marked_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('project_id', 'unique_key', name='uix_th_project_unique_key'),
+    )
 
 class PRScanResult(Base):
     """Stores scan results triggered by a GitHub PR webhook event."""

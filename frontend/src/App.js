@@ -29,6 +29,7 @@ function AppContent() {
   const [hasNextPage, setHasNextPage] = useState(false);
   const [hasPrevPage, setHasPrevPage] = useState(false);
   const [totalVulnerabilities, setTotalVulnerabilities] = useState(0);
+  const [totalSecrets, setTotalSecrets] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const navigate = useNavigate();
 
@@ -78,6 +79,7 @@ function AppContent() {
       setHasNextPage(data.has_next || false);
       setHasPrevPage(data.has_prev || false);
       setTotalVulnerabilities(data.total_vulnerabilities || 0);
+      setTotalSecrets(data.total_secrets || 0);
     } catch (error) {
       console.error("Failed to load projects:", error);
     }
@@ -207,7 +209,7 @@ function AppContent() {
         <div className="main-area">
           <Routes>
             <Route path="/" element={
-              <Dashboard projects={projects} totalProjects={totalProjects} totalVulnerabilities={totalVulnerabilities} onSelectProject={handleSelectProject} onNavigate={handleNavigate} />
+              <Dashboard projects={projects} totalProjects={totalProjects} totalVulnerabilities={totalVulnerabilities} totalSecrets={totalSecrets} onSelectProject={handleSelectProject} onNavigate={handleNavigate} />
             } />
             <Route path="/projects" element={
               <div className="content-wrapper">

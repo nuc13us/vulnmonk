@@ -6,7 +6,8 @@ import {
   updateGlobalConfig,
   getAllGlobalConfigs,
   getPRCheckConfig,
-  savePRCheckConfig
+  savePRCheckConfig,
+  updateTrufflehogExcludeDetectors
 } from "../api";
 
 export default function Configurations({ user }) {
@@ -30,8 +31,13 @@ export default function Configurations({ user }) {
   const [includeYamlFiles, setIncludeYamlFiles] = useState([]);
   const [globalIncludeYamlFiles, setGlobalIncludeYamlFiles] = useState([]);
 
+  // TruffleHog exclude detectors
+  const [newThDetector, setNewThDetector] = useState("");
+  const [newGlobalThDetector, setNewGlobalThDetector] = useState("");
+  const [globalThExcludeDetectors, setGlobalThExcludeDetectors] = useState("");
+
   // PR Check state
-  const [prConfig, setPrConfig] = useState(null);  // { enabled, webhook_secret, block_on_severity }
+  const [prConfig, setPrConfig] = useState(null);  // { enabled, webhook_secret, block_on_severity, th_block_on }
   const [prSaving, setPrSaving] = useState(false);
 
   const isAdmin = user && user.role === "admin";
@@ -67,6 +73,7 @@ export default function Configurations({ user }) {
     try {
       const configs = await getAllGlobalConfigs();
       setGlobalExcludeRules(configs.global_exclude_rules || "");
+      setGlobalThExcludeDetectors(configs.global_trufflehog_exclude_detectors || "");
       const includeYamlData = configs.global_include_rules_yaml || "";
       // Parse as JSON array or fallback to empty array
       try {
@@ -88,7 +95,7 @@ export default function Configurations({ user }) {
     // Load PR check config
     getPRCheckConfig(project.id)
       .then(cfg => setPrConfig(cfg))
-      .catch(() => setPrConfig({ enabled: false, webhook_secret: "", block_on_severity: "none" }));
+      .catch(() => setPrConfig({ enabled: false, webhook_secret: "", block_on_severity: "none", th_block_on: "none" }));
     // Parse include rules as JSON array
     try {
       const parsed = project.include_rules_yaml ? JSON.parse(project.include_rules_yaml) : [];
@@ -380,6 +387,101 @@ export default function Configurations({ user }) {
 
   // Global rules are now always applied automatically - no toggle needed
 
+  // TruffleHog exclude detectors handlers
+  const getThDetectorsCount = (detectors) => {
+    if (!detectors) return 0;
+    return detectors.split(",").map(d => d.trim()).filter(Boolean).length;
+  };
+
+  const handleAddThDetector = async () => {
+    if (!selectedProject || !newThDetector.trim()) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const existing = selectedProject.trufflehog_exclude_detectors
+        ? selectedProject.trufflehog_exclude_detectors.split(",").map(d => d.trim()).filter(Boolean)
+        : [];
+      if (existing.includes(newThDetector.trim())) {
+        setMessage({ type: "error", text: "Detector already excluded" });
+        setSaving(false);
+        return;
+      }
+      const updated = [...existing, newThDetector.trim()];
+      await updateTrufflehogExcludeDetectors(selectedProject.id, updated);
+      setMessage({ type: "success", text: "TruffleHog detector excluded!" });
+      setNewThDetector("");
+      await loadProjects(currentPage, searchQuery);
+      setSelectedProject({ ...selectedProject, trufflehog_exclude_detectors: updated.join(",") });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "Failed to add detector" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveThDetector = async (detector) => {
+    if (!selectedProject) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const existing = selectedProject.trufflehog_exclude_detectors
+        ? selectedProject.trufflehog_exclude_detectors.split(",").map(d => d.trim()).filter(Boolean)
+        : [];
+      const updated = existing.filter(d => d !== detector);
+      await updateTrufflehogExcludeDetectors(selectedProject.id, updated);
+      setMessage({ type: "success", text: "Detector removed!" });
+      await loadProjects(currentPage, searchQuery);
+      setSelectedProject({ ...selectedProject, trufflehog_exclude_detectors: updated.join(",") });
+    } catch (error) {
+      setMessage({ type: "error", text: "Failed to remove detector" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddGlobalThDetector = async () => {
+    if (!newGlobalThDetector.trim()) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const existing = globalThExcludeDetectors
+        ? globalThExcludeDetectors.split(",").map(d => d.trim()).filter(Boolean)
+        : [];
+      if (existing.includes(newGlobalThDetector.trim())) {
+        setMessage({ type: "error", text: `Detector "${newGlobalThDetector.trim()}" already in global list` });
+        setSaving(false);
+        return;
+      }
+      const updated = [...existing, newGlobalThDetector.trim()];
+      await updateGlobalConfig("global_trufflehog_exclude_detectors", updated.join(","));
+      await loadGlobalConfigs();
+      setNewGlobalThDetector("");
+      setMessage({ type: "success", text: "Global TruffleHog detector excluded!" });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "Failed to add global detector" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveGlobalThDetector = async (detector) => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const existing = globalThExcludeDetectors
+        ? globalThExcludeDetectors.split(",").map(d => d.trim()).filter(Boolean)
+        : [];
+      const updated = existing.filter(d => d !== detector);
+      await updateGlobalConfig("global_trufflehog_exclude_detectors", updated.join(","));
+      await loadGlobalConfigs();
+      setMessage({ type: "success", text: "Global detector removed!" });
+    } catch (error) {
+      setMessage({ type: "error", text: "Failed to remove global detector" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="configurations-container">
       <div className="config-header">
@@ -443,6 +545,7 @@ export default function Configurations({ user }) {
                   
                   const excludeRulesCount = getRulesCount(project.exclude_rules);
                   const includeRulesCount = getYamlRulesCount(project.include_rules_yaml);
+                  const thDetectorsCount = getThDetectorsCount(project.trufflehog_exclude_detectors);
                   const isSelected = selectedProject?.id === project.id;
                 
                 return (
@@ -461,6 +564,11 @@ export default function Configurations({ user }) {
                         {includeRulesCount > 0 && (
                           <span className="rule-count-badge" style={{ background: "#dcfce7", color: "#166534", marginLeft: "4px" }}>
                             ✅ {includeRulesCount} include
+                          </span>
+                        )}
+                        {thDetectorsCount > 0 && (
+                          <span className="rule-count-badge" style={{ background: "#ede9fe", color: "#5b21b6", marginLeft: "4px" }}>
+                            🔑 {thDetectorsCount} detectors
                           </span>
                         )}
                       </div>
@@ -779,6 +887,26 @@ export default function Configurations({ user }) {
                             Requires a branch protection rule in GitHub requiring the <code>vulnmonk/pr-scan</code> status check to pass.
                           </p>
                         </div>
+
+                        {/* Block on TruffleHog secrets */}
+                        <div style={{ marginBottom: "16px" }}>
+                          <label style={{ fontSize: "0.9rem", fontWeight: 600, display: "block", marginBottom: "6px", color: "#374151" }}>
+                            Block PR on Secrets (TruffleHog)
+                          </label>
+                          <select
+                            value={prConfig.th_block_on || "none"}
+                            onChange={e => isAdmin && setPrConfig({ ...prConfig, th_block_on: e.target.value })}
+                            disabled={!isAdmin}
+                            style={{ padding: "9px 14px", border: "2px solid #e5e7eb", borderRadius: "8px", fontSize: "0.9rem", background: "#fff" }}
+                          >
+                            <option value="none">Do not block (report only)</option>
+                            <option value="verified">Block on Verified secrets only</option>
+                            <option value="all">Block on all secrets (verified + unverified)</option>
+                          </select>
+                          <p style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "4px" }}>
+                            Controls whether TruffleHog secret findings fail the <code>vulnmonk/pr-scan</code> check.
+                          </p>
+                        </div>
                       </>
                     )}
 
@@ -794,6 +922,73 @@ export default function Configurations({ user }) {
                     )}
                   </div>
                 )}
+              </div>
+
+              {/* TruffleHog Exclude Detectors Section */}
+              <div className="config-section" style={{ marginTop: "32px" }}>
+                <h4 style={{ fontSize: "1rem", marginBottom: "16px", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
+                  🔑 TruffleHog Exclude Detectors
+                </h4>
+                <div className="config-rules-form">
+                  <label style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "8px", display: "block", color: "#374151" }}>
+                    Project-Specific Excluded Detectors {!isAdmin && <span style={{ color: "#dc2626", fontSize: "0.85rem" }}>(Admin only)</span>}
+                  </label>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <input
+                      type="text"
+                      value={newThDetector}
+                      onChange={e => setNewThDetector(e.target.value)}
+                      placeholder="Enter detector name (e.g., AWS, Npm, CloudflareApiToken)"
+                      onKeyPress={(e) => e.key === 'Enter' && isAdmin && handleAddThDetector()}
+                      style={{ 
+                        flex: 1, 
+                        padding: "10px 14px",
+                        border: "2px solid #e5e7eb",
+                        borderRadius: "8px",
+                        fontSize: "0.9rem"
+                      }}
+                      disabled={saving || !isAdmin}
+                    />
+                    <button 
+                      onClick={handleAddThDetector} 
+                      disabled={saving || !newThDetector.trim() || !isAdmin}
+                      className="primary-btn"
+                      style={{ padding: "10px 24px", whiteSpace: "nowrap", background: "#7c3aed" }}
+                      title={!isAdmin ? "Admin access required" : ""}
+                    >
+                      {saving ? "Adding..." : "Add Detector"}
+                    </button>
+                  </div>
+                  
+                  {selectedProject.trufflehog_exclude_detectors && getThDetectorsCount(selectedProject.trufflehog_exclude_detectors) > 0 && (
+                    <div className="current-rules-display">
+                      <h5 style={{ fontSize: "0.9rem", marginBottom: "8px", marginTop: "16px", fontWeight: 600 }}>
+                        Excluded Detectors ({getThDetectorsCount(selectedProject.trufflehog_exclude_detectors)})
+                      </h5>
+                      <div className="rules-tags">
+                        {selectedProject.trufflehog_exclude_detectors.split(",").map((det, idx) => {
+                          const trimmedDet = det.trim();
+                          if (!trimmedDet) return null;
+                          return (
+                            <span key={idx} className="rule-tag-removable" style={{ background: "#ede9fe", color: "#5b21b6" }}>
+                              {trimmedDet}
+                              {isAdmin && (
+                                <button 
+                                  className="rule-remove-btn"
+                                  onClick={() => handleRemoveThDetector(trimmedDet)}
+                                  disabled={saving}
+                                  title="Remove this detector"
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Global Rules Section (Admin Only) */}
@@ -960,6 +1155,62 @@ export default function Configurations({ user }) {
                       </div>
                     )}
                   </div>
+                </div>
+
+                {/* Global TruffleHog Exclude Detectors */}
+                <div className="config-section" style={{ marginTop: "24px" }}>
+                  <h5 style={{ fontSize: "0.95rem", marginBottom: "12px", fontWeight: 600 }}>
+                    Global TruffleHog Exclude Detectors
+                  </h5>
+                  <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+                    <input
+                      type="text"
+                      value={newGlobalThDetector}
+                      onChange={e => setNewGlobalThDetector(e.target.value)}
+                      placeholder="Enter detector name (e.g., AWS, Npm)"
+                      onKeyPress={(e) => e.key === 'Enter' && handleAddGlobalThDetector()}
+                      style={{ 
+                        flex: 1, 
+                        padding: "10px 14px",
+                        border: "2px solid #e5e7eb",
+                        borderRadius: "8px",
+                        fontSize: "0.9rem"
+                      }}
+                      disabled={saving}
+                    />
+                    <button 
+                      onClick={handleAddGlobalThDetector}
+                      disabled={saving || !newGlobalThDetector.trim()}
+                      className="primary-btn"
+                      style={{ padding: "10px 24px", whiteSpace: "nowrap", background: "#7c3aed" }}
+                    >
+                      {saving ? "Adding..." : "Exclude Detector Global"}
+                    </button>
+                  </div>
+                  
+                  {globalThExcludeDetectors && getThDetectorsCount(globalThExcludeDetectors) > 0 && (
+                    <div>
+                      <div className="rules-tags">
+                        {globalThExcludeDetectors.split(",").map((det, idx) => {
+                          const trimmedDet = det.trim();
+                          if (!trimmedDet) return null;
+                          return (
+                            <span key={idx} className="rule-tag-removable" style={{ background: "#ede9fe", color: "#5b21b6" }}>
+                              {trimmedDet}
+                              <button 
+                                className="rule-remove-btn"
+                                onClick={() => handleRemoveGlobalThDetector(trimmedDet)}
+                                disabled={saving}
+                                title="Remove this global detector"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 </>

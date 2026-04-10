@@ -54,6 +54,17 @@ def _should_block(findings: list, block_on_severity: str) -> bool:
     return False
 
 
+def _should_block_trufflehog(th_findings: list, th_block_on: str) -> bool:
+    """Return True if TruffleHog findings should block the PR."""
+    if not th_block_on or th_block_on == "none":
+        return False
+    if th_block_on == "all":
+        return len(th_findings) > 0
+    if th_block_on == "verified":
+        return any(f.get("Verified", False) for f in th_findings)
+    return False
+
+
 # ==================== GITHUB API HELPERS ====================
 
 def _github_headers(token: str) -> dict:
@@ -142,6 +153,12 @@ def _post_commit_status(token: str, owner: str, repo: str, sha: str,
     )
 
 
+def _build_pr_scan_dashboard_url(project_id: int, pr_number: int | None = None) -> str:
+    """Build frontend URL for a project's PR scans page."""
+    base = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+    return f"{base}/project/{project_id}"
+
+
 # ==================== OPENGREP SCAN HELPERS ====================
 
 def _run_opengrep_on_dir(scan_dir: str, exclude_rules: str = "",
@@ -185,16 +202,54 @@ def _run_opengrep_on_dir(scan_dir: str, exclude_rules: str = "",
                 os.remove(p)
 
 
+# ==================== TRUFFLEHOG SCAN HELPERS ====================
+
+def _run_trufflehog_on_dir(scan_dir: str, exclude_detectors_str: str = "") -> list:
+    """
+    Run trufflehog filesystem scan on a directory already populated with changed files.
+    Returns a list of finding objects (SourceMetadata present) or [] on error.
+    """
+    try:
+        cmd = ["trufflehog", "filesystem", scan_dir, "--json"]
+        if exclude_detectors_str and exclude_detectors_str.strip():
+            cmd.append(f"--exclude-detectors={exclude_detectors_str.strip()}")
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+        findings = []
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                # Only include actual findings — they have SourceMetadata with Filesystem data
+                if "SourceMetadata" in obj:
+                    src_data = obj.get("SourceMetadata", {}).get("Data", {})
+                    if "Filesystem" in src_data:
+                        findings.append(obj)
+            except json.JSONDecodeError:
+                continue
+        return findings
+    except subprocess.TimeoutExpired:
+        return []
+    except Exception:
+        return []
+
+
 # ==================== CORE PR SCAN LOGIC ====================
 
 def _run_pr_scan(pr_scan_id: int, project_id: int, pr_number: int,
                  head_sha: str, owner: str, repo: str,
                  access_token: str, pr_files: list,
                  block_on_severity: str, project_exclude: str,
-                 project_include_yaml: str) -> None:
+                 project_include_yaml: str,
+                 dashboard_url: str = "",
+                 th_exclude_detectors: str = "",
+                 th_block_on: str = "none") -> None:
     """
-    Background task: download changed files, scan with opengrep, filter findings
-    to changed lines only, post commit status, update DB.
+    Background task: download changed files, scan with opengrep + trufflehog,
+    filter findings to changed lines only, post commit status, update DB.
     """
     db = SessionLocal()
     scan_dir = tempfile.mkdtemp(prefix=f"pr-{pr_number}-")
@@ -229,11 +284,12 @@ def _run_pr_scan(pr_scan_id: int, project_id: int, pr_number: int,
 
         if isinstance(scan_result, dict) and "error" in scan_result:
             _post_commit_status(access_token, owner, repo, head_sha,
-                                "error", f"Scan error: {scan_result['error'][:100]}")
+                                "error", f"Scan error: {scan_result['error'][:100]}",
+                                target_url=dashboard_url)
             crud.update_pr_scan(db, pr_scan_id, "error", 0, scan_result)
             return
 
-        # ── 3. Filter findings to changed lines only ───────────────────────
+        # ── 3. Filter opengrep findings to changed lines only ──────────────
         all_findings = scan_result.get("results", []) if isinstance(scan_result, dict) else []
         filtered = []
 
@@ -254,31 +310,72 @@ def _run_pr_scan(pr_scan_id: int, project_id: int, pr_number: int,
                 finding["status"] = "open"
                 filtered.append(finding)
 
-        # ── 4. Determine commit status ─────────────────────────────────────
-        block = _should_block(filtered, block_on_severity)
-        count = len(filtered)
+        # ── 4. Run trufflehog on the same downloaded files ─────────────────
+        th_findings_raw = _run_trufflehog_on_dir(scan_dir, th_exclude_detectors)
+        th_filtered = []
 
-        if count == 0:
+        for th_finding in th_findings_raw:
+            fs_data = th_finding.get("SourceMetadata", {}).get("Data", {}).get("Filesystem", {})
+            abs_path = fs_data.get("file", "")
+            line = fs_data.get("line", 0) if fs_data.get("line") else 0
+
+            # Strip scan_dir prefix to get path relative to repo root
+            if abs_path.startswith(scan_dir):
+                rel_path = abs_path[len(scan_dir):].lstrip("/")
+            else:
+                rel_path = abs_path
+
+            changed = file_changed_lines.get(rel_path, set())
+            if line in changed:
+                th_finding = dict(th_finding)
+                th_finding["_pr_file"] = rel_path
+                th_filtered.append(th_finding)
+
+        # ── 5. Determine commit status ─────────────────────────────────────
+        block_sast = _should_block(filtered, block_on_severity)
+        block_th = _should_block_trufflehog(th_filtered, th_block_on)
+        block = block_sast or block_th
+        count = len(filtered)
+        th_count = len(th_filtered)
+
+        if count == 0 and th_count == 0:
             gh_state = "success"
-            description = "No security issues found in changed lines."
+            description = "No security issues or secrets found in changed lines."
         elif block:
+            reasons = []
+            if block_sast:
+                reasons.append(f"{count} SAST issue(s) ({block_on_severity}+)")
+            if block_th:
+                verified_count = sum(1 for f in th_filtered if f.get("Verified"))
+                reasons.append(f"{th_count} secret(s) ({verified_count} verified)")
             gh_state = "failure"
-            description = f"{count} security issue(s) found — PR blocked ({block_on_severity}+)."
+            description = f"PR blocked — {', '.join(reasons)}."
         else:
+            parts = []
+            if count > 0:
+                parts.append(f"{count} SAST issue(s)")
+            if th_count > 0:
+                parts.append(f"{th_count} secret(s)")
             gh_state = "success"
-            description = f"{count} security issue(s) found (below blocking threshold)."
+            description = (", ".join(parts) + " found (below blocking threshold).") if parts else "No issues found."
 
         _post_commit_status(access_token, owner, repo, head_sha,
-                            gh_state, description)
+                            gh_state, description, target_url=dashboard_url)
 
-        result_payload = {"results": filtered, "total": count}
+        result_payload = {
+            "results": filtered,
+            "total": count,
+            "trufflehog_results": th_filtered,
+            "trufflehog_total": th_count,
+        }
         scan_status = "failure" if block else "success"
         crud.update_pr_scan(db, pr_scan_id, scan_status, count, result_payload)
 
     except Exception as exc:
         try:
             _post_commit_status(access_token, owner, repo, head_sha,
-                                "error", f"VulnMonk internal error: {str(exc)[:80]}")
+                                "error", f"VulnMonk internal error: {str(exc)[:80]}",
+                                target_url=dashboard_url)
             crud.update_pr_scan(db, pr_scan_id, "error", 0,
                                 {"error": str(exc)})
         except Exception:
@@ -353,7 +450,7 @@ async def github_webhook(
         raise HTTPException(status_code=400, detail="Missing repository.full_name")
 
     # ── Resolve project + scan settings ───────────────────────────────────
-    project, block_on_severity = crud.get_project_and_severity_for_pr(db, repo_full_name)
+    project, block_on_severity, th_block_on = crud.get_project_and_severity_for_pr(db, repo_full_name)
     if not project:
         return {"status": "ignored", "reason": "Repo not tracked or PR checks disabled"}
 
@@ -395,9 +492,12 @@ async def github_webhook(
     if not head_sha or not pr_number:
         raise HTTPException(status_code=400, detail="Missing PR head SHA or number")
 
+    dashboard_url = _build_pr_scan_dashboard_url(project.id, pr_number)
+
     # ── Post 'pending' status immediately ─────────────────────────────────
     _post_commit_status(access_token, owner, repo_name, head_sha,
-                        "pending", "VulnMonk PR scan in progress...")
+                        "pending", "VulnMonk PR scan in progress...",
+                        target_url=dashboard_url)
 
     # ── Fetch changed files from GitHub ───────────────────────────────────
     pr_files = _get_pr_files(access_token, owner, repo_name, pr_number)
@@ -417,6 +517,12 @@ async def github_webhook(
     )
 
     # ── Queue background scan ──────────────────────────────────────────────
+    # Merge project + global TruffleHog exclude detectors
+    th_project_detectors = [d.strip() for d in (project.trufflehog_exclude_detectors or "").split(",") if d.strip()]
+    th_global_config = crud.get_global_config(db, "global_trufflehog_exclude_detectors")
+    th_global_detectors = [d.strip() for d in (th_global_config.value if th_global_config else "").split(",") if d.strip()]
+    th_exclude_detectors = ",".join(set(th_project_detectors + th_global_detectors))
+
     background_tasks.add_task(
         _run_pr_scan,
         pr_scan_id=pr_scan_record.id,
@@ -430,6 +536,9 @@ async def github_webhook(
         block_on_severity=block_on_severity,
         project_exclude=project.exclude_rules or "",
         project_include_yaml=project.include_rules_yaml or "",
+        dashboard_url=dashboard_url,
+        th_exclude_detectors=th_exclude_detectors,
+        th_block_on=th_block_on or "none",
     )
 
     return {"status": "queued", "pr_scan_id": pr_scan_record.id}
@@ -465,6 +574,10 @@ def save_pr_check_config(
         raise HTTPException(status_code=400,
                             detail="block_on_severity must be none, INFO, WARNING, or ERROR")
 
+    if payload.th_block_on not in ("none", "verified", "all"):
+        raise HTTPException(status_code=400,
+                            detail="th_block_on must be none, verified, or all")
+
     # Generate a secret if enabling for the first time and none provided
     secret = payload.webhook_secret
     if payload.enabled and not secret:
@@ -475,6 +588,7 @@ def save_pr_check_config(
         enabled=payload.enabled,
         webhook_secret=secret or "",
         block_on_severity=payload.block_on_severity,
+        th_block_on=payload.th_block_on,
     )
     return schemas.PRCheckConfigOut.from_orm(config)
 

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from "react";
-import { getScans, getScanDetail, triggerScan, markFalsePositive, unmarkFalsePositive, getScanStatus, getPRScans, getPRScanDetail } from "../api";
+import { getScans, getScanDetail, triggerScan, markFalsePositive, unmarkFalsePositive, getScanStatus, getPRScans, getPRScanDetail, triggerTrufflehogScan, getTrufflehogScanStatus, getTrufflehogScans, getTrufflehogScanDetail, markTrufflehogFalsePositive, unmarkTrufflehogFalsePositive } from "../api";
 
 // Parse date string from backend (may be missing Z suffix) and format in user's local timezone
 function formatDate(dateStr) {
@@ -235,8 +235,105 @@ function FindingDrawer({ finding, onClose, onMarkFP, onUnmarkFP, isAdmin }) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── TruffleHog Finding Detail Drawer ─────────────────────────────────────────
+function TrufflehogDrawer({ finding, onClose, onMarkFP, onUnmarkFP, isAdmin }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [finding, onClose]);
+
+  if (!finding) return null;
+
+  const git = finding.SourceMetadata?.Data?.Git || {};
+  const isFP = finding.status === 'false_positive';
+  const verified = finding.Verified;
+
+  const Row = ({ label, children }) => (
+    <div style={{ display: 'flex', gap: '12px', padding: '8px 0', borderBottom: '1px solid #f1f5f9', alignItems: 'flex-start' }}>
+      <span style={{ minWidth: '130px', fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em', paddingTop: '2px' }}>{label}</span>
+      <span style={{ fontSize: '0.875rem', color: '#1e293b', flex: 1, wordBreak: 'break-word' }}>{children || '—'}</span>
+    </div>
+  );
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.25)', zIndex: 900 }} />
+      <div style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, width: 'min(560px, 90vw)',
+        background: '#fff', zIndex: 901, display: 'flex', flexDirection: 'column',
+        boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
+        animation: 'slideInRight 0.22s ease',
+      }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
+              <span style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 700,
+                background: verified ? '#fef2f2' : '#fffbeb', color: verified ? '#dc2626' : '#d97706',
+                border: `1px solid ${verified ? '#fecaca' : '#fde68a'}` }}>
+                {verified ? 'VERIFIED' : 'UNVERIFIED'}
+              </span>
+              <span style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 700,
+                background: '#ede9fe', color: '#5b21b6' }}>
+                {finding.DetectorName}
+              </span>
+              {isFP && <span style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '0.78rem', fontWeight: 700, background: '#f1f5f9', color: '#64748b' }}>False Positive</span>}
+            </div>
+            <div style={{ fontSize: '0.82rem', color: '#64748b', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              {git.file}:{git.line}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.4rem', color: '#94a3b8', padding: '0 4px', lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+          {finding.DetectorDescription && (
+            <div style={{ padding: '14px 16px', background: '#eff6ff', border: '1px solid #bfdbfe',
+              borderRadius: '8px', marginBottom: '16px', fontSize: '0.875rem', color: '#1e293b', lineHeight: 1.6 }}>
+              {finding.DetectorDescription}
+            </div>
+          )}
+          <Row label="Detector">{finding.DetectorName} (Type {finding.DetectorType})</Row>
+          <Row label="File"><span style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>{git.file}</span></Row>
+          <Row label="Line">{git.line}</Row>
+          <Row label="Commit"><span style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>{git.commit}</span></Row>
+          <Row label="Author">{git.email}</Row>
+          <Row label="Date">{git.timestamp}</Row>
+          <Row label="Decoder">{finding.DecoderName}</Row>
+          <Row label="Verified">{verified ? '✅ Yes' : '❌ No'}</Row>
+          <Row label="Redacted">{finding.Redacted || '—'}</Row>
+          {finding.ExtraData?.rotation_guide && (
+            <Row label="Rotation Guide">
+              <a href={finding.ExtraData.rotation_guide} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', wordBreak: 'break-all' }}>
+                {finding.ExtraData.rotation_guide}
+              </a>
+            </Row>
+          )}
+        </div>
+
+        {isAdmin && (
+          <div style={{ padding: '12px 20px', borderTop: '1px solid #e5e7eb', display: 'flex', gap: '8px' }}>
+            {isFP ? (
+              <button className="secondary" style={{ fontSize: '0.85rem', padding: '7px 16px' }}
+                onClick={() => { onUnmarkFP(finding.unique_key); onClose(); }}>
+                Remove from False Positives
+              </button>
+            ) : (
+              <button className="secondary" style={{ fontSize: '0.85rem', padding: '7px 16px' }}
+                onClick={() => { onMarkFP(finding.unique_key); onClose(); }}>
+                Mark as False Positive
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function ScanResults({ project, user }) {
-  const [activeTab, setActiveTab] = useState("full"); // "full" | "pr"
+  const [activeTab, setActiveTab] = useState("full"); // "full" | "pr" | "trufflehog"
   const [scanHistory, setScanHistory] = useState([]);
   const [scanDetail, setScanDetail] = useState(null);
   const [scanning, setScanning] = useState(false);
@@ -249,6 +346,14 @@ export default function ScanResults({ project, user }) {
   // PR scans state
   const [prScans, setPrScans] = useState([]);
   const [prScanDetail, setPrScanDetail] = useState(null);
+
+  // TruffleHog state
+  const [thScanHistory, setThScanHistory] = useState([]);
+  const [thScanDetail, setThScanDetail] = useState(null);
+  const [thScanning, setThScanning] = useState(false);
+  const [thShowFalsePositives, setThShowFalsePositives] = useState(false);
+  const [selectedThFinding, setSelectedThFinding] = useState(null);
+  const thPollRef = useRef(null);
 
   // Poll server scan status so the banner shows even after re-navigation
   useEffect(() => {
@@ -278,6 +383,33 @@ export default function ScanResults({ project, user }) {
     };
   }, [project]);
 
+  // Poll TruffleHog scan status
+  useEffect(() => {
+    if (!project) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const { scanning: active } = await getTrufflehogScanStatus(project.id);
+        if (cancelled) return;
+        setThScanning(active);
+        if (active) {
+          thPollRef.current = setTimeout(poll, 5000);
+        } else {
+          getTrufflehogScans(project.id).then(setThScanHistory);
+        }
+      } catch {
+        // ignore transient errors
+      }
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(thPollRef.current);
+    };
+  }, [project]);
+
   const isAdmin = user && user.role === "admin";
   
   // Filter states
@@ -294,8 +426,10 @@ export default function ScanResults({ project, user }) {
     if (project) {
       getScans(project.id).then(setScanHistory);
       getPRScans(project.id).then(setPrScans).catch(() => setPrScans([]));
+      getTrufflehogScans(project.id).then(setThScanHistory).catch(() => setThScanHistory([]));
       setScanDetail(null);
       setPrScanDetail(null);
+      setThScanDetail(null);
       setLogs([]);
     }
   }, [project]);
@@ -393,6 +527,65 @@ export default function ScanResults({ project, user }) {
     return `https://semgrep.dev/r/${checkId}`;
   };
 
+  // TruffleHog handlers
+  const handleTrufflehogScan = async () => {
+    setThScanning(true);
+    setLogs(l => [
+      { type: 'info', msg: 'TruffleHog scan started...' },
+      ...l.slice(0, 4)
+    ]);
+    try {
+      await triggerTrufflehogScan(project.id);
+      setThScanHistory(await getTrufflehogScans(project.id));
+      setLogs(l => [
+        { type: 'success', msg: 'TruffleHog scan completed.' },
+        ...l.slice(0, 4)
+      ]);
+    } catch (err) {
+      setLogs(l => [
+        { type: 'error', msg: `TruffleHog scan failed: ${err.message}` },
+        ...l.slice(0, 4)
+      ]);
+    } finally {
+      setThScanning(false);
+      clearTimeout(thPollRef.current);
+    }
+  };
+
+  const handleSelectThScan = async (scan) => {
+    setThScanDetail(null);
+    setLogs(l => [
+      { type: 'info', msg: `Viewing TruffleHog scan from ${new Date(scan.scan_date).toLocaleString()}` },
+      ...l.slice(0, 4)
+    ]);
+    const detail = await getTrufflehogScanDetail(scan.id);
+    setThScanDetail(detail);
+  };
+
+  const handleMarkThFP = async (uniqueKey) => {
+    await markTrufflehogFalsePositive(project.id, uniqueKey);
+    setLogs(l => [
+      { type: 'success', msg: 'Marked as false positive' },
+      ...l.slice(0, 4)
+    ]);
+    if (thScanDetail) {
+      const detail = await getTrufflehogScanDetail(thScanDetail.id);
+      setThScanDetail(detail);
+    }
+  };
+
+  const handleUnmarkThFP = async (uniqueKey) => {
+    await unmarkTrufflehogFalsePositive(project.id, uniqueKey);
+    setLogs(l => [
+      { type: 'success', msg: 'Removed from false positives' },
+      ...l.slice(0, 4)
+    ]);
+    if (thScanDetail) {
+      const detail = await getTrufflehogScanDetail(thScanDetail.id);
+      setThScanDetail(detail);
+    }
+  };
+
   const badgeColor = (sev) => {
     if (!sev) return '';
     const sevLower = sev.toLowerCase();
@@ -431,7 +624,7 @@ export default function ScanResults({ project, user }) {
 
       {/* Tab switcher */}
       <div style={{ display: 'flex', gap: '4px', marginBottom: '20px', borderBottom: '2px solid #e5e7eb', paddingBottom: '0' }}>
-        {['full', 'pr'].map(tab => (
+        {['full', 'trufflehog', 'pr'].map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -447,7 +640,7 @@ export default function ScanResults({ project, user }) {
               fontSize: '0.95rem',
             }}
           >
-            {tab === 'full' ? '🔍 Full Scans' : `🔔 PR Scans${prScans.length > 0 ? ` (${prScans.length})` : ''}`}
+            {tab === 'full' ? '🔍 SAST Scans' : tab === 'trufflehog' ? `🔑 Secret Scans${thScanHistory.length > 0 ? ` (${thScanHistory.length})` : ''}` : `🔔 PR Scans${prScans.length > 0 ? ` (${prScans.length})` : ''}`}
           </button>
         ))}
       </div>
@@ -791,6 +984,231 @@ export default function ScanResults({ project, user }) {
         </>
       )}
 
+      {/* ─── TRUFFLEHOG SCANS TAB ─── */}
+      {activeTab === 'trufflehog' && (<>
+        <div className="project-controls">
+          {thScanning && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '10px 16px', marginBottom: '12px',
+              background: '#fef3c7', border: '1px solid #fde68a',
+              borderRadius: '8px', color: '#92400e', fontSize: '0.9rem', fontWeight: 500
+            }}>
+              <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
+              TruffleHog scan in progress — this may take a few minutes...
+            </div>
+          )}
+          <button
+            onClick={handleTrufflehogScan}
+            disabled={thScanning || !isAdmin}
+            className="primary-btn"
+            style={{ background: '#7c3aed' }}
+            title={!isAdmin ? "Admin access required" : ""}
+          >
+            {thScanning ? "Scanning..." : "Run Secret Scan"}
+          </button>
+          {!isAdmin && (
+            <span style={{ fontSize: '0.9rem', color: '#dc2626', marginLeft: '12px' }}>
+              🔒 View-only mode (Admin access required for scans)
+            </span>
+          )}
+        </div>
+
+        <div className="scan-history-section">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <h3 style={{ margin: 0 }}>TruffleHog Scan History</h3>
+          </div>
+          {thScanHistory.length > 0 ? (
+            <div className="scan-history-compact">
+              {thScanHistory.map((scan, idx) => (
+                <button
+                  key={scan.id}
+                  className={`scan-history-row${thScanDetail && thScanDetail.id === scan.id ? ' active' : ''}`}
+                  onClick={() => handleSelectThScan(scan)}
+                >
+                  <span className="scan-history-row-num">#{idx + 1}</span>
+                  <span className="scan-history-row-date">{formatDate(scan.scan_date)}</span>
+                  <span className="finding-count">{scan.findings_count} secrets</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-message">No TruffleHog scans yet. Click "Run Secret Scan" to trigger a scan.</p>
+          )}
+        </div>
+
+        {thScanDetail && (
+          <>
+            <div className="scan-detail-section">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                <h4 style={{ margin: 0 }}>Open Secrets</h4>
+                <button
+                  onClick={() => setThShowFalsePositives(!thShowFalsePositives)}
+                  className="secondary"
+                  style={{ fontSize: "0.9rem", padding: "8px 16px" }}
+                >
+                  {thShowFalsePositives ? "Hide" : "Show"} False Positives ({thScanDetail.result_json?.false_positives?.length || 0})
+                </button>
+              </div>
+
+              {/* TH Filter Controls */}
+              <div className="filters-container">
+                <div className="filter-group">
+                  <label>Search:</label>
+                  <input
+                    type="text"
+                    placeholder="Filter by file, detector, or commit..."
+                    value={filters.searchText}
+                    onChange={(e) => setFilters({...filters, searchText: e.target.value})}
+                    className="filter-input"
+                  />
+                </div>
+                {filters.searchText ? (
+                  <button
+                    onClick={() => setFilters({ severity: 'all', searchText: '', vulnerabilityClass: 'all' })}
+                    className="clear-filters-btn"
+                  >
+                    Clear Filters
+                  </button>
+                ) : null}
+              </div>
+
+              {Array.isArray(thScanDetail.result_json?.results) && thScanDetail.result_json.results.length > 0 ? (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>File</th>
+                      <th>Line</th>
+                      <th>Detector</th>
+                      <th>Verified</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {thScanDetail.result_json.results
+                      .filter(f => {
+                        if (filters.searchText) {
+                          const s = filters.searchText.toLowerCase();
+                          const file = (f.SourceMetadata?.Data?.Git?.file || '').toLowerCase();
+                          const detector = (f.DetectorName || '').toLowerCase();
+                          const commit = (f.SourceMetadata?.Data?.Git?.commit || '').toLowerCase();
+                          if (!file.includes(s) && !detector.includes(s) && !commit.includes(s)) return false;
+                        }
+                        return true;
+                      })
+                      .map((f, idx) => {
+                        const git = f.SourceMetadata?.Data?.Git || {};
+                        const githubUrl = buildGitHubUrl(git.file, git.line);
+                        return (
+                          <tr key={idx} onClick={() => setSelectedThFinding(f)} style={{ cursor: 'pointer' }} title="Click to view details">
+                            <td>
+                              {githubUrl ? (
+                                <a href={githubUrl} target="_blank" rel="noopener noreferrer" className="github-link" onClick={e => e.stopPropagation()}>
+                                  {git.file}
+                                </a>
+                              ) : git.file}
+                            </td>
+                            <td>{git.line}</td>
+                            <td><span className="badge" style={{ background: '#ede9fe', color: '#5b21b6' }}>{f.DetectorName}</span></td>
+                            <td>
+                              <span className={f.Verified ? 'badge badge-error' : 'badge badge-warning'}>
+                                {f.Verified ? 'Verified' : 'Unverified'}
+                              </span>
+                            </td>
+                            <td><span className="badge" style={{ background: "#10b981" }}>{f.status || "open"}</span></td>
+                            <td>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleMarkThFP(f.unique_key); }}
+                                style={{ padding: "6px 12px", fontSize: "0.85rem" }}
+                                className="secondary"
+                                disabled={!isAdmin}
+                                title={!isAdmin ? "Admin access required" : ""}
+                              >
+                                Mark as FP
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              ) : (
+                <span className="empty-message">No open secrets found.</span>
+              )}
+            </div>
+
+            {thShowFalsePositives && thScanDetail.result_json?.false_positives && thScanDetail.result_json.false_positives.length > 0 && (
+              <div className="scan-detail-section" style={{ marginTop: "32px" }}>
+                <h4>False Positives</h4>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>File</th>
+                      <th>Line</th>
+                      <th>Detector</th>
+                      <th>Verified</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {thScanDetail.result_json.false_positives.map((f, idx) => {
+                      const git = f.SourceMetadata?.Data?.Git || {};
+                      return (
+                        <tr key={idx} style={{ background: "#fef2f2", cursor: 'pointer' }} onClick={() => setSelectedThFinding(f)} title="Click to view details">
+                          <td>{git.file}</td>
+                          <td>{git.line}</td>
+                          <td><span className="badge" style={{ background: '#ede9fe', color: '#5b21b6' }}>{f.DetectorName}</span></td>
+                          <td>
+                            <span className={f.Verified ? 'badge badge-error' : 'badge badge-warning'}>
+                              {f.Verified ? 'Verified' : 'Unverified'}
+                            </span>
+                          </td>
+                          <td><span className="badge" style={{ background: "#64748b" }}>False Positive</span></td>
+                          <td>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleUnmarkThFP(f.unique_key); }}
+                              style={{ padding: "6px 12px", fontSize: "0.85rem" }}
+                              className="secondary"
+                              disabled={!isAdmin}
+                              title={!isAdmin ? "Admin access required" : "Remove from false positives"}
+                            >
+                              Remove FP
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* TH Summary */}
+            {thScanDetail.result_json?.summary && (
+              <div style={{ marginTop: '24px', padding: '16px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem' }}>Scan Summary</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+                  {thScanDetail.result_json.summary.verified_secrets !== undefined && (
+                    <div><span style={{ fontWeight: 600, color: '#dc2626' }}>{thScanDetail.result_json.summary.verified_secrets}</span> <span style={{ color: '#64748b', fontSize: '0.85rem' }}>verified</span></div>
+                  )}
+                  {thScanDetail.result_json.summary.unverified_secrets !== undefined && (
+                    <div><span style={{ fontWeight: 600, color: '#d97706' }}>{thScanDetail.result_json.summary.unverified_secrets}</span> <span style={{ color: '#64748b', fontSize: '0.85rem' }}>unverified</span></div>
+                  )}
+                  {thScanDetail.result_json.summary.scan_duration && (
+                    <div><span style={{ fontWeight: 600 }}>{thScanDetail.result_json.summary.scan_duration}</span> <span style={{ color: '#64748b', fontSize: '0.85rem' }}>duration</span></div>
+                  )}
+                  {thScanDetail.result_json.summary.chunks !== undefined && (
+                    <div><span style={{ fontWeight: 600 }}>{thScanDetail.result_json.summary.chunks}</span> <span style={{ color: '#64748b', fontSize: '0.85rem' }}>chunks scanned</span></div>
+                  )}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </>)}
+
       {/* ─── PR SCANS TAB ─── */}
       {activeTab === 'pr' && (
         <div>
@@ -861,7 +1279,7 @@ export default function ScanResults({ project, user }) {
                   Scan error: {prScanDetail.result_json.error}
                 </div>
               ) : (prScanDetail.result_json?.results || []).length === 0 ? (
-                <p className="empty-message">✅ No security issues found in the changed lines.</p>
+                <p className="empty-message">✅ No SAST issues found in the changed lines.</p>
               ) : (
                 <table>
                   <thead>
@@ -899,6 +1317,56 @@ export default function ScanResults({ project, user }) {
                   </tbody>
                 </table>
               )}
+
+              {/* TruffleHog secrets found in PR changed lines */}
+              <div style={{ marginTop: '28px' }}>
+                <h5 style={{ margin: '0 0 10px 0', fontSize: '0.95rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  🔑 Secrets Found in Changed Lines
+                  <span style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '0.78rem',
+                    background: (prScanDetail.result_json?.trufflehog_results || []).length > 0 ? '#fef3c7' : '#f1f5f9',
+                    color: (prScanDetail.result_json?.trufflehog_results || []).length > 0 ? '#92400e' : '#64748b',
+                    fontWeight: 600 }}>
+                    {(prScanDetail.result_json?.trufflehog_results || []).length}
+                  </span>
+                </h5>
+                {(prScanDetail.result_json?.trufflehog_results || []).length === 0 ? (
+                  <p className="empty-message" style={{ marginTop: 0 }}>✅ No secrets found in the changed lines.</p>
+                ) : (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>File</th>
+                        <th>Line</th>
+                        <th>Detector</th>
+                        <th>Verified</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(prScanDetail.result_json.trufflehog_results || []).map((f, idx) => {
+                        const relPath = f._pr_file || f.SourceMetadata?.Data?.Filesystem?.file || '';
+                        const line = f.SourceMetadata?.Data?.Filesystem?.line;
+                        const githubUrl = buildGitHubUrl(relPath, line);
+                        return (
+                          <tr key={idx} onClick={() => setSelectedThFinding(f)} style={{ cursor: 'pointer' }} title="Click to view details">
+                            <td>
+                              {githubUrl
+                                ? <a href={githubUrl} target="_blank" rel="noopener noreferrer" className="github-link" onClick={e => e.stopPropagation()}>{relPath}</a>
+                                : relPath}
+                            </td>
+                            <td>{line}</td>
+                            <td><span className="badge" style={{ background: '#ede9fe', color: '#5b21b6' }}>{f.DetectorName}</span></td>
+                            <td>
+                              <span className={f.Verified ? 'badge badge-error' : 'badge badge-warning'}>
+                                {f.Verified ? 'Verified' : 'Unverified'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -909,6 +1377,14 @@ export default function ScanResults({ project, user }) {
         onClose={() => setSelectedFinding(null)}
         onMarkFP={handleMarkFalsePositive}
         onUnmarkFP={handleUnmarkFalsePositive}
+        isAdmin={isAdmin}
+      />
+
+      <TrufflehogDrawer
+        finding={selectedThFinding}
+        onClose={() => setSelectedThFinding(null)}
+        onMarkFP={handleMarkThFP}
+        onUnmarkFP={handleUnmarkThFP}
         isAdmin={isAdmin}
       />
 
