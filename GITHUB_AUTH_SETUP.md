@@ -33,11 +33,7 @@ Click **Create GitHub App** to finish.
 - **App Slug** — the app name visible in the URL (e.g. `github.com/apps/your-slug`).
 - **Private key** — click "Generate a private key" and save the `.pem` file.
 
-## 4. Install the GitHub App
-
-Go to **GitHub App settings → Install App** and install it on your account or the target organization. This grants the app access to repositories.
-
-## 5. Configure `backend/.env`
+## 4. Configure `backend/.env`
 
 Copy the private key to the backend directory:
 ```bash
