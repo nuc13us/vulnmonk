@@ -20,48 +20,34 @@ cp backend/.env.example backend/.env
 Edit `backend/.env`:
 
 ```env
-# Required — generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
-JWT_SECRET_KEY=your-secret-key-here
+# Backend Environment Variables
+
+# JWT Configuration
+# Generate a secure secret key: python -c "import secrets; print(secrets.token_urlsafe(32))"
+JWT_SECRET_KEY=
 JWT_EXPIRE_DAYS=30
 
-# GitHub App — required for PR scan checks and private repo access
+# Database Configuration
+# Leave empty to use default: vulnmonk.db in project root
+DATABASE_PATH=
+
+# CORS Origins (comma-separated) — set to your frontend URL in production
+CORS_ORIGINS=http://localhost:3000
+
+# GitHub App Configuration — required for PR scan checks and private repo access
+# Create a GitHub App at https://github.com/settings/apps
+# Set callback URL to: http://YOUR_SERVER:3000/api/webhooks/github
+# Generate a webhook secret: python -c "import secrets; print(secrets.token_urlsafe(32))" and set the same value in the webhook secret field of your GitHub App.
+# Download the private key .pem and place it in the backend/ directory
 GITHUB_APP_ID=
 GITHUB_APP_SLUG=
+GITHUB_APP_WEBHOOK_SECRET=
 GITHUB_APP_PRIVATE_KEY=backend/your-app.private-key.pem
-
-FRONTEND_URL=http://localhost:3000
-CORS_ORIGINS=http://localhost:3000
 ```
 
 > **GitHub App setup:** See [GITHUB_AUTH_SETUP.md](GITHUB_AUTH_SETUP.md).
 
-### 2. Backend
-
-```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -r backend/requirements.txt
-uvicorn backend.main:app --reload   # http://localhost:8000
-```
-
-> Ensure `opengrep` and `trufflehog` are on your `PATH` for local dev. Both are pre-installed in the Docker image.
-> - OpenGrep: https://github.com/opengrep/opengrep/releases/latest
-> - TruffleHog: `brew install trufflehog` or https://github.com/trufflesecurity/trufflehog/releases/latest
-
-### 3. Frontend
-
-```bash
-cd frontend && npm install && npm start   # http://localhost:3000
-```
-
-### 4. Create an Admin User
-
-```bash
-python3 add_user.py <username> <password> admin
-```
-
----
-
-## Docker
+### 2. Docker (recommended)
 
 ```bash
 docker compose up --build
@@ -76,6 +62,30 @@ CLI tools inside the container:
 ```bash
 docker exec -it vulnmonk-backend python add_user.py <username> <password> admin
 docker exec -it vulnmonk-backend python add_user.py --list
+```
+
+### 3. Backend (local)
+
+```bash
+python3 -m venv venv && source venv/bin/activate
+pip install -r backend/requirements.txt
+uvicorn backend.main:app --reload   # http://localhost:8000
+```
+
+> Ensure `opengrep` and `trufflehog` are on your `PATH` for local dev. Both are pre-installed in the Docker image.
+> - OpenGrep: https://github.com/opengrep/opengrep/releases/latest
+> - TruffleHog: `brew install trufflehog` or https://github.com/trufflesecurity/trufflehog/releases/latest
+
+### 4. Frontend (local)
+
+```bash
+cd frontend && npm install && npm start   # http://localhost:3000
+```
+
+### 5. Create an Admin User
+
+```bash
+python3 add_user.py <username> <password> admin
 ```
 
 ---
