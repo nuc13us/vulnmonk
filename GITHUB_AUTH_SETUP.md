@@ -37,7 +37,7 @@ Then set in `backend/.env`:
 ```env
 GITHUB_APP_ID=your_app_id_here
 GITHUB_APP_SLUG=your_app_name
-GITHUB_APP_PRIVATE_KEY=backend/your-app.private-key.pem
+GITHUB_APP_PRIVATE_KEY=backend/your-app-private-key.pem
 GITHUB_APP_WEBHOOK_SECRET=your_webhook_secret
 ```
 
