@@ -4,12 +4,21 @@ A full-stack dashboard for managing SAST scan results and secret scanning across
 
 > **Security / deployment disclaimer:** VulnMonk is intended to be self-hosted. Deploy it only in a secured environment you control (private network/VPN, restricted inbound access, TLS, and strong credentials). This app may store scan outputs and connect to GitHub via a GitHub App that can access repositories—do not expose it directly to the public internet.
 
-## Tech Stack
+## Quick Start
 
-- **Backend:** Python 3.12, FastAPI, SQLAlchemy, SQLite, JWT auth
-- **Frontend:** React 19, JavaScript, CSS
-- **SAST Scanner:** OpenGrep
-- **Secret Scanner:** TruffleHog
+```bash
+git clone https://github.com/nuc13us/vulnmonk.git && cd vulnmonk && docker compose up --build
+```
+
+The backend automatically creates a default **admin** account on first launch if none exists. Retrieve the generated password from the container logs:
+
+```bash
+docker logs vulnmonk-backend 2>&1 | grep 'Password :'
+```
+
+Then open `http://localhost:3000` and log in with username `admin` and the password from the log output.
+
+---
 
 ## Setup
 
@@ -84,11 +93,7 @@ uvicorn backend.main:app --reload   # http://localhost:8000
 cd frontend && npm install && npm start   # http://localhost:3000
 ```
 
-### 5. Create an Admin User
 
-```bash
-python3 add_user.py <username> <password> admin
-```
 
 ---
 
@@ -147,6 +152,15 @@ vulnmonk/
 ├── view_db.py              # Database viewer
 └── vulnmonk.db             # SQLite database (auto-created)
 ```
+
+## Tech Stack
+
+- **Backend:** Python 3.12, FastAPI, SQLAlchemy, SQLite, JWT auth
+- **Frontend:** React 19, JavaScript, CSS
+- **SAST Scanner:** OpenGrep
+- **Secret Scanner:** TruffleHog
+
+---
 
 ## License
 

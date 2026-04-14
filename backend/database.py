@@ -17,8 +17,24 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+def _run_migrations():
+    """Apply any schema migrations that create_all cannot handle (new columns on existing tables)."""
+    with engine.connect() as conn:
+        # projects.scheduled_scan_enabled — added for daily scheduled scans feature
+        try:
+            conn.execute(
+                __import__("sqlalchemy").text(
+                    "ALTER TABLE projects ADD COLUMN scheduled_scan_enabled INTEGER"
+                )
+            )
+            conn.commit()
+        except Exception:
+            # Column already exists — safe to ignore
+            pass
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    _run_migrations()
 
 def get_db():
     db = SessionLocal()

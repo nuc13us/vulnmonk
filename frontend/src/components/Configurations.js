@@ -7,7 +7,10 @@ import {
   getAllGlobalConfigs,
   getPRCheckConfig,
   savePRCheckConfig,
-  updateTrufflehogExcludeDetectors
+  updateTrufflehogExcludeDetectors,
+  getProjectScheduledScan,
+  updateProjectScheduledScan,
+  getSchedulerStatus
 } from "../api";
 
 export default function Configurations({ user }) {
@@ -40,11 +43,18 @@ export default function Configurations({ user }) {
   const [prConfig, setPrConfig] = useState(null);  // { enabled, webhook_secret, block_on_severity, th_block_on }
   const [prSaving, setPrSaving] = useState(false);
 
+  // Scheduled Scans state
+  const [projectScheduledScan, setProjectScheduledScan] = useState(null); // null | 0 | 1
+  const [globalScheduledScan, setGlobalScheduledScan] = useState(false);
+  const [scheduledScanSaving, setScheduledScanSaving] = useState(false);
+  const [schedulerNextRun, setSchedulerNextRun] = useState(null);
+
   const isAdmin = user && user.role === "admin";
 
   useEffect(() => {
     loadProjects();
     loadGlobalConfigs();
+    getSchedulerStatus().then(s => setSchedulerNextRun(s.next_run_time)).catch(() => {});
   }, []);
 
   const loadProjects = async (page = 1, search = "") => {
@@ -74,6 +84,7 @@ export default function Configurations({ user }) {
       const configs = await getAllGlobalConfigs();
       setGlobalExcludeRules(configs.global_exclude_rules || "");
       setGlobalThExcludeDetectors(configs.global_trufflehog_exclude_detectors || "");
+      setGlobalScheduledScan(configs.global_scheduled_scan_enabled === true);
       const includeYamlData = configs.global_include_rules_yaml || "";
       // Parse as JSON array or fallback to empty array
       try {
@@ -96,6 +107,9 @@ export default function Configurations({ user }) {
     getPRCheckConfig(project.id)
       .then(cfg => setPrConfig(cfg))
       .catch(() => setPrConfig({ enabled: false, webhook_secret: "", block_on_severity: "none", th_block_on: "none" }));
+    getProjectScheduledScan(project.id)
+      .then(cfg => setProjectScheduledScan(cfg.scheduled_scan_enabled))
+      .catch(() => setProjectScheduledScan(null));
     // Parse include rules as JSON array
     try {
       const parsed = project.include_rules_yaml ? JSON.parse(project.include_rules_yaml) : [];
@@ -368,6 +382,35 @@ export default function Configurations({ user }) {
 
   const handleClearGlobalIncludeRules = () => {
     setGlobalIncludeYamlFiles([]);
+  };
+
+  const handleToggleProjectScheduledScan = async (newValue) => {
+    if (!selectedProject) return;
+    setScheduledScanSaving(true);
+    setMessage(null);
+    try {
+      const result = await updateProjectScheduledScan(selectedProject.id, newValue);
+      setProjectScheduledScan(result.scheduled_scan_enabled);
+      setMessage({ type: "success", text: "Scheduled scan setting saved!" });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "Failed to update scheduled scan setting" });
+    } finally {
+      setScheduledScanSaving(false);
+    }
+  };
+
+  const handleToggleGlobalScheduledScan = async (enabled) => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      await updateGlobalConfig("global_scheduled_scan_enabled", enabled ? "1" : "0");
+      setGlobalScheduledScan(enabled);
+      setMessage({ type: "success", text: `Global daily scans ${enabled ? "enabled" : "disabled"}!` });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "Failed to update global scheduled scan" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSavePrConfig = async () => {
@@ -924,6 +967,57 @@ export default function Configurations({ user }) {
                 )}
               </div>
 
+              {/* Scheduled Scans Section */}
+              <div className="config-section" style={{ marginTop: "32px" }}>
+                <h4 style={{ fontSize: "1rem", marginBottom: "4px", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
+                  🕐 Scheduled Daily Scans
+                </h4>
+                <p style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "16px" }}>
+                  <strong>On</strong>: this project always runs daily scans (even if global is off).<br/>
+                  <strong>Off</strong>: this project never runs scheduled scans (even if global is on).<br/>
+                  <strong>Inherit</strong>: follows the global scheduled scan setting.
+                </p>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  {[{ label: "Inherit", value: null }, { label: "On", value: 1 }, { label: "Off", value: 0 }].map(opt => {
+                    const isActive = projectScheduledScan === opt.value;
+                    const colors = {
+                      null: { border: "#2563eb", bg: "#eff6ff", text: "#1d4ed8" },
+                      1:    { border: "#10b981", bg: "#ecfdf5", text: "#065f46" },
+                      0:    { border: "#dc2626", bg: "#fef2f2", text: "#991b1b" },
+                    };
+                    const c = isActive ? colors[String(opt.value)] : null;
+                    return (
+                      <button
+                        key={String(opt.value)}
+                        onClick={() => isAdmin && handleToggleProjectScheduledScan(opt.value)}
+                        disabled={!isAdmin || scheduledScanSaving}
+                        style={{
+                          padding: "6px 18px",
+                          borderRadius: "6px",
+                          border: isActive ? `2px solid ${c.border}` : "2px solid #e5e7eb",
+                          fontWeight: 600,
+                          fontSize: "0.85rem",
+                          background: isActive ? c.bg : "#f9fafb",
+                          color: isActive ? c.text : "#6b7280",
+                          cursor: isAdmin ? "pointer" : "not-allowed",
+                          transition: "all 0.15s"
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                  {!isAdmin && <span style={{ fontSize: "0.85rem", color: "#dc2626", marginLeft: "4px" }}>(Admin only)</span>}
+                </div>
+                <p style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "8px" }}>
+                  Current: <strong>{
+                    projectScheduledScan === 1 ? "✅ Always On"
+                    : projectScheduledScan === 0 ? "❌ Always Off"
+                    : "⬆️ Inheriting global setting"
+                  }</strong>
+                </p>
+              </div>
+
               {/* TruffleHog Exclude Detectors Section */}
               <div className="config-section" style={{ marginTop: "32px" }}>
                 <h4 style={{ fontSize: "1rem", marginBottom: "16px", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1211,6 +1305,40 @@ export default function Configurations({ user }) {
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* Global Scheduled Scans */}
+                <div className="config-section" style={{ marginTop: "24px" }}>
+                  <h5 style={{ fontSize: "0.95rem", marginBottom: "8px", fontWeight: 600 }}>
+                    🕐 Global Daily Scheduled Scans
+                  </h5>
+                  <p style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "12px" }}>
+                    When enabled, all projects that haven't opted out will automatically run both OpenGrep and TruffleHog scans once per day. The scan time can be changed via the <code>SCHEDULED_SCAN_HOUR</code> / <code>SCHEDULED_SCAN_MINUTE</code> environment variables (defaults to 02:00 UTC).
+                  </p>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <button
+                      onClick={() => handleToggleGlobalScheduledScan(!globalScheduledScan)}
+                      disabled={saving}
+                      style={{
+                        padding: "8px 22px",
+                        borderRadius: "20px",
+                        border: "none",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                        fontSize: "0.9rem",
+                        background: globalScheduledScan ? "#10b981" : "#e5e7eb",
+                        color: globalScheduledScan ? "white" : "#6b7280",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      {globalScheduledScan ? "Enabled" : "Disabled"}
+                    </button>
+                    {schedulerNextRun && (
+                      <span style={{ fontSize: "0.85rem", color: "#64748b" }}>
+                        Next run: {new Date(schedulerNextRun).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 </>

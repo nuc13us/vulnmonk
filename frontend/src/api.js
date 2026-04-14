@@ -531,3 +531,34 @@ export async function updateTrufflehogExcludeDetectors(projectId, detectors) {
   }
   return res.json();
 }
+
+// ==================== SCHEDULED SCAN ENDPOINTS ====================
+
+export async function getProjectScheduledScan(projectId) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/scheduled-scan`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to load scheduled scan config");
+  return res.json();
+}
+
+export async function updateProjectScheduledScan(projectId, enabled) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/scheduled-scan`, {
+    method: "PUT",
+    headers: getHeaders(),
+    body: JSON.stringify({ enabled })
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || "Failed to update scheduled scan config");
+  }
+  return res.json();
+}
+
+export async function getSchedulerStatus() {
+  const res = await apiFetch(`${API_BASE}/scheduled-scan/status`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to load scheduler status");
+  return res.json();
+}

@@ -33,6 +33,7 @@ function Integrations() {
   const [globalPrSeverity, setGlobalPrSeverity] = useState("none");
   const [globalPrThBlockOn, setGlobalPrThBlockOn] = useState("none");
   const [savingPrEnabled, setSavingPrEnabled] = useState(false);
+  const [toast, setToast] = useState(null); // { type: "success"|"error", text }
 
   const loadUser = useCallback(async () => {
     try {
@@ -291,7 +292,16 @@ function Integrations() {
           addLog("warning", `Skipped ${item.url}: ${item.reason}`);
         });
       }
-      
+
+      // Show prominent banner and auto-dismiss after 6 seconds
+      const msg = result.total_imported > 0
+        ? `✅ ${result.total_imported} project${result.total_imported !== 1 ? "s" : ""} added successfully!${
+            result.total_skipped > 0 ? ` (${result.total_skipped} already existed)` : ""
+          }`
+        : `ℹ️ No new projects added — all ${result.total_skipped} repositories already exist.`;
+      setToast({ type: result.total_imported > 0 ? "success" : "info", text: msg });
+      setTimeout(() => setToast(null), 6000);
+
       // Clear selection after import
       setSelectedRepos([]);
     } catch (error) {
@@ -344,6 +354,44 @@ function Integrations() {
 
   return (
     <div className="integrations-container">
+      {toast && (
+        <div style={{
+          position: "fixed",
+          top: "24px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 1000,
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          padding: "14px 24px",
+          borderRadius: "10px",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
+          fontSize: "0.95rem",
+          fontWeight: 600,
+          background: toast.type === "success" ? "#ecfdf5" : "#eff6ff",
+          border: `1px solid ${toast.type === "success" ? "#6ee7b7" : "#93c5fd"}`,
+          color: toast.type === "success" ? "#065f46" : "#1e40af",
+          minWidth: "300px",
+          maxWidth: "520px",
+          textAlign: "center"
+        }}>
+          <span style={{ flex: 1 }}>{toast.text}</span>
+          <button
+            onClick={() => setToast(null)}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              fontSize: "1.1rem",
+              color: "inherit",
+              lineHeight: 1,
+              padding: "0 4px"
+            }}
+            title="Dismiss"
+          >×</button>
+        </div>
+      )}
       <div className="integrations-header">
         <h2>GitHub Integrations</h2>
         <div style={{ display: "flex", gap: "8px" }}>

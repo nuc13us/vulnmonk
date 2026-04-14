@@ -618,6 +618,68 @@ def unmark_false_positive(
     return {"success": True}
 
 
+# ==================== SCHEDULED SCAN ENDPOINTS ====================
+
+@router.get("/projects/{project_id}/scheduled-scan")
+def get_scheduled_scan_config(
+    project_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the scheduled scan setting for a project.
+
+    scheduled_scan_enabled: null = inherit global, 1 = always on, 0 = always off.
+    """
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {
+        "project_id": project_id,
+        "scheduled_scan_enabled": project.scheduled_scan_enabled,
+    }
+
+
+@router.put("/projects/{project_id}/scheduled-scan")
+def update_scheduled_scan_config(
+    project_id: int,
+    payload: dict = Body(...),
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db),
+):
+    """Update the scheduled scan setting for a project.
+
+    Send { "enabled": true } to opt-in, { "enabled": false } to opt-out,
+    or { "enabled": null } to inherit the global setting.
+    """
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    enabled = payload.get("enabled")  # True | False | None
+    updated = crud.update_project_scheduled_scan(db, project_id, enabled)
+    return {
+        "project_id": project_id,
+        "scheduled_scan_enabled": updated.scheduled_scan_enabled,
+    }
+
+
+@router.get("/scheduled-scan/status")
+def get_scheduler_status(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return global scheduler status and next run time."""
+    from ..scheduler import get_next_run_time
+
+    global_cfg = crud.get_global_config(db, "global_scheduled_scan_enabled")
+    global_enabled = global_cfg and global_cfg.value == "1"
+    next_run = get_next_run_time()
+    return {
+        "global_scheduled_scan_enabled": bool(global_enabled),
+        "next_run_time": next_run,
+    }
+
+
 # ==================== GLOBAL CONFIGURATION ENDPOINTS ====================
 
 # NOTE: these specific routes MUST be declared before the wildcard /{key} handlers below.
@@ -716,10 +778,12 @@ def get_all_global_configs(
     global_exclude = crud.get_global_config(db, "global_exclude_rules")
     global_include = crud.get_global_config(db, "global_include_rules_yaml")
     global_th_exclude = crud.get_global_config(db, "global_trufflehog_exclude_detectors")
+    global_sched = crud.get_global_config(db, "global_scheduled_scan_enabled")
     return {
         "global_exclude_rules": global_exclude.value if global_exclude else "",
         "global_include_rules_yaml": global_include.value if global_include else "",
         "global_trufflehog_exclude_detectors": global_th_exclude.value if global_th_exclude else "",
+        "global_scheduled_scan_enabled": (global_sched.value == "1") if global_sched else False,
     }
 
 

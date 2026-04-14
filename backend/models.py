@@ -16,6 +16,8 @@ class Project(Base):
     apply_global_include = Column(Integer, default=0)  # Apply global include rules (disabled by default)
     trufflehog_exclude_detectors = Column(String, default="")  # Comma-separated detector names
     integration_id = Column(Integer, ForeignKey('github_integrations.id'), nullable=True)  # Link to GitHub integration for authenticated cloning
+    # Scheduled scan: NULL=inherit global, 1=enabled, 0=disabled
+    scheduled_scan_enabled = Column(Integer, nullable=True, default=None)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     scans = relationship("ScanResult", back_populates="project")
 

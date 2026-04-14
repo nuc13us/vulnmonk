@@ -484,3 +484,50 @@ def get_pr_scan(db: Session, pr_scan_id: int):
     return db.query(models.PRScanResult).filter(
         models.PRScanResult.id == pr_scan_id
     ).first()
+
+
+# ==================== SCHEDULED SCAN CRUD ====================
+
+def get_projects_for_scheduled_scan(db: Session):
+    """Return projects that are eligible for the daily scheduled scan.
+
+    Eligibility rules:
+    - project.scheduled_scan_enabled == 1  → always included
+    - project.scheduled_scan_enabled is NULL → inherit from the global toggle
+    - project.scheduled_scan_enabled == 0  → always excluded (opted-out)
+    """
+    from sqlalchemy import or_
+
+    global_config = get_global_config(db, "global_scheduled_scan_enabled")
+    global_enabled = global_config and global_config.value == "1"
+
+    if global_enabled:
+        # Include projects that are explicitly enabled OR inheriting the global setting (NULL)
+        return db.query(models.Project).filter(
+            or_(
+                models.Project.scheduled_scan_enabled == 1,
+                models.Project.scheduled_scan_enabled == None,  # noqa: E711
+            )
+        ).all()
+    else:
+        # Global off: only include projects with an explicit opt-in
+        return db.query(models.Project).filter(
+            models.Project.scheduled_scan_enabled == 1
+        ).all()
+
+
+def update_project_scheduled_scan(db: Session, project_id: int, enabled):
+    """Set a project's scheduled_scan_enabled.
+
+    Pass True/1 to opt in, False/0 to opt out, None to inherit the global setting.
+    """
+    project = get_project(db, project_id)
+    if not project:
+        return None
+    if enabled is None:
+        project.scheduled_scan_enabled = None
+    else:
+        project.scheduled_scan_enabled = 1 if enabled else 0
+    db.commit()
+    db.refresh(project)
+    return project
