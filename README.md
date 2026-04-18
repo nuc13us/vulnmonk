@@ -50,10 +50,12 @@ CORS_ORIGINS=http://localhost:3000
 # Set callback URL to: http://YOUR_SERVER:3000/api/webhooks/github
 # Generate a webhook secret: python -c "import secrets; print(secrets.token_urlsafe(32))" and set the same value in the webhook secret field of your GitHub App.
 # Download the private key .pem and place it in the backend/ directory
+# FRONTEND_URL should match the URL where your frontend is hosted (e.g., http://localhost:3000 for local development) for PR checks to traverse correctly.
 GITHUB_APP_ID=
 GITHUB_APP_SLUG=
 GITHUB_APP_WEBHOOK_SECRET=
 GITHUB_APP_PRIVATE_KEY=backend/your-app.private-key.pem
+FRONTEND_URL=
 ```
 
 > **GitHub App setup:** See [GITHUB_AUTH_SETUP.md](GITHUB_AUTH_SETUP.md).

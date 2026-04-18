@@ -48,7 +48,10 @@ GITHUB_APP_ID=your_app_id_here
 GITHUB_APP_SLUG=your_app_slug
 GITHUB_APP_PRIVATE_KEY=backend/your-app-private-key.pem
 GITHUB_APP_WEBHOOK_SECRET=your_webhook_secret
+FRONTEND_URL=http://YOUR_SERVER_IP:3000
 ```
+
+> `FRONTEND_URL` is used to build the **Details** link on the GitHub PR status check. Set it to the public URL of your VulnMonk frontend so the link is reachable from GitHub.
 
 ## Troubleshooting
 
