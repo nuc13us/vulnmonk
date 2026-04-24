@@ -486,6 +486,39 @@ def get_pr_scan(db: Session, pr_scan_id: int):
     ).first()
 
 
+# ==================== SLACK CRUD ====================
+
+def get_slack_config(db: Session) -> dict:
+    """Return Slack config from GlobalConfiguration."""
+    webhook = get_global_config(db, "slack_webhook_url")
+    enabled = get_global_config(db, "slack_enabled")
+    return {
+        "webhook_url": webhook.value if webhook else "",
+        "enabled": (enabled.value == "1") if enabled else False,
+    }
+
+
+def save_slack_config(db: Session, webhook_url: str, enabled: bool) -> dict:
+    """Persist Slack config into GlobalConfiguration rows."""
+    update_global_config(db, "slack_webhook_url", webhook_url or "")
+    update_global_config(db, "slack_enabled", "1" if enabled else "0")
+    return {"webhook_url": webhook_url or "", "enabled": enabled}
+
+
+def update_project_slack_notify(db: Session, project_id: int, enabled):
+    """Set project's slack_notify_enabled. None=inherit global, 1=on, 0=off."""
+    project = get_project(db, project_id)
+    if not project:
+        return None
+    if enabled is None:
+        project.slack_notify_enabled = None
+    else:
+        project.slack_notify_enabled = 1 if enabled else 0
+    db.commit()
+    db.refresh(project)
+    return project
+
+
 # ==================== SCHEDULED SCAN CRUD ====================
 
 def get_projects_for_scheduled_scan(db: Session):

@@ -10,7 +10,9 @@ import {
   updateTrufflehogExcludeDetectors,
   getProjectScheduledScan,
   updateProjectScheduledScan,
-  getSchedulerStatus
+  getSchedulerStatus,
+  getProjectSlackNotify,
+  updateProjectSlackNotify
 } from "../api";
 
 export default function Configurations({ user }) {
@@ -48,6 +50,10 @@ export default function Configurations({ user }) {
   const [globalScheduledScan, setGlobalScheduledScan] = useState(false);
   const [scheduledScanSaving, setScheduledScanSaving] = useState(false);
   const [schedulerNextRun, setSchedulerNextRun] = useState(null);
+
+  // Slack Notifications state
+  const [projectSlackNotify, setProjectSlackNotify] = useState(null); // null | 0 | 1
+  const [slackNotifySaving, setSlackNotifySaving] = useState(false);
 
   const isAdmin = user && user.role === "admin";
 
@@ -110,6 +116,9 @@ export default function Configurations({ user }) {
     getProjectScheduledScan(project.id)
       .then(cfg => setProjectScheduledScan(cfg.scheduled_scan_enabled))
       .catch(() => setProjectScheduledScan(null));
+    getProjectSlackNotify(project.id)
+      .then(cfg => setProjectSlackNotify(cfg.slack_notify_enabled))
+      .catch(() => setProjectSlackNotify(null));
     // Parse include rules as JSON array
     try {
       const parsed = project.include_rules_yaml ? JSON.parse(project.include_rules_yaml) : [];
@@ -396,6 +405,21 @@ export default function Configurations({ user }) {
       setMessage({ type: "error", text: error.message || "Failed to update scheduled scan setting" });
     } finally {
       setScheduledScanSaving(false);
+    }
+  };
+
+  const handleToggleProjectSlackNotify = async (newValue) => {
+    if (!selectedProject) return;
+    setSlackNotifySaving(true);
+    setMessage(null);
+    try {
+      const result = await updateProjectSlackNotify(selectedProject.id, newValue);
+      setProjectSlackNotify(result.slack_notify_enabled);
+      setMessage({ type: "success", text: "Slack notification setting saved!" });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "Failed to update Slack notification setting" });
+    } finally {
+      setSlackNotifySaving(false);
     }
   };
 
@@ -1013,6 +1037,57 @@ export default function Configurations({ user }) {
                   Current: <strong>{
                     projectScheduledScan === 1 ? "✅ Always On"
                     : projectScheduledScan === 0 ? "❌ Always Off"
+                    : "⬆️ Inheriting global setting"
+                  }</strong>
+                </p>
+              </div>
+
+              {/* Slack Notifications Section */}
+              <div className="config-section" style={{ marginTop: "32px" }}>
+                <h4 style={{ fontSize: "1rem", marginBottom: "4px", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
+                  🔔 Slack Notifications
+                </h4>
+                <p style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "16px" }}>
+                  <strong>On</strong>: always send Slack alerts for this project (blocked PRs + new daily issues).<br/>
+                  <strong>Off</strong>: never send alerts for this project.<br/>
+                  <strong>Inherit</strong>: follows the global Slack setting configured in Integrations.
+                </p>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  {[{ label: "Inherit", value: null }, { label: "On", value: 1 }, { label: "Off", value: 0 }].map(opt => {
+                    const isActive = projectSlackNotify === opt.value;
+                    const colors = {
+                      null: { border: "#2563eb", bg: "#eff6ff", text: "#1d4ed8" },
+                      1:    { border: "#10b981", bg: "#ecfdf5", text: "#065f46" },
+                      0:    { border: "#dc2626", bg: "#fef2f2", text: "#991b1b" },
+                    };
+                    const c = isActive ? colors[String(opt.value)] : null;
+                    return (
+                      <button
+                        key={String(opt.value)}
+                        onClick={() => isAdmin && handleToggleProjectSlackNotify(opt.value)}
+                        disabled={!isAdmin || slackNotifySaving}
+                        style={{
+                          padding: "6px 18px",
+                          borderRadius: "6px",
+                          border: isActive ? `2px solid ${c.border}` : "2px solid #e5e7eb",
+                          fontWeight: 600,
+                          fontSize: "0.85rem",
+                          background: isActive ? c.bg : "#f9fafb",
+                          color: isActive ? c.text : "#6b7280",
+                          cursor: isAdmin ? "pointer" : "not-allowed",
+                          transition: "all 0.15s"
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                  {!isAdmin && <span style={{ fontSize: "0.85rem", color: "#dc2626", marginLeft: "4px" }}>(Admin only)</span>}
+                </div>
+                <p style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "8px" }}>
+                  Current: <strong>{
+                    projectSlackNotify === 1 ? "✅ Always On"
+                    : projectSlackNotify === 0 ? "❌ Always Off"
                     : "⬆️ Inheriting global setting"
                   }</strong>
                 </p>

@@ -198,6 +198,24 @@ def _scan_project(project_id: int) -> None:
                         project_id,
                         raw_count,
                     )
+
+                    # ── Slack: notify if new issues found ──────────────────
+                    recent_scans = crud.get_scan_results(db, project_id, skip=0, limit=2)
+                    if len(recent_scans) >= 2:
+                        prev_count = recent_scans[1].findings_count or 0
+                        if raw_count > prev_count:
+                            from .slack import should_notify, send_slack_message
+                            notify, webhook_url = should_notify(project, db)
+                            if notify:
+                                delta = raw_count - prev_count
+                                frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+                                repo_name = project.github_url.rstrip("/").split("/")[-1].replace(".git", "")
+                                msg = (
+                                    f":warning: *New SAST Issues Found* — `{repo_name}` daily scan\n"
+                                    f"{delta} new issue(s) detected (was {prev_count}, now {raw_count})\n"
+                                    f"<{frontend_url}/project/{project_id}|View results>"
+                                )
+                                send_slack_message(webhook_url, msg)
                 else:
                     logger.error(
                         "Scheduled SAST scan error for project %d: %s",
@@ -249,6 +267,24 @@ def _scan_project(project_id: int) -> None:
                         project_id,
                         raw_count,
                     )
+
+                    # ── Slack: notify if new secrets found ─────────────────
+                    recent_th_scans = crud.get_trufflehog_scan_results(db, project_id, skip=0, limit=2)
+                    if len(recent_th_scans) >= 2:
+                        prev_th_count = recent_th_scans[1].findings_count or 0
+                        if raw_count > prev_th_count:
+                            from .slack import should_notify, send_slack_message
+                            notify, webhook_url = should_notify(project, db)
+                            if notify:
+                                delta = raw_count - prev_th_count
+                                frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+                                repo_name = project.github_url.rstrip("/").split("/")[-1].replace(".git", "")
+                                msg = (
+                                    f":key: *New Secrets Found* — `{repo_name}` daily scan\n"
+                                    f"{delta} new secret(s) detected (was {prev_th_count}, now {raw_count})\n"
+                                    f"<{frontend_url}/project/{project_id}|View results>"
+                                )
+                                send_slack_message(webhook_url, msg)
                 else:
                     logger.error(
                         "Scheduled TruffleHog scan error for project %d: %s",

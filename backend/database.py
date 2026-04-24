@@ -32,6 +32,17 @@ def _run_migrations():
             # Column already exists — safe to ignore
             pass
 
+        # projects.slack_notify_enabled — added for Slack notifications feature
+        try:
+            conn.execute(
+                __import__("sqlalchemy").text(
+                    "ALTER TABLE projects ADD COLUMN slack_notify_enabled INTEGER"
+                )
+            )
+            conn.commit()
+        except Exception:
+            pass
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     _run_migrations()

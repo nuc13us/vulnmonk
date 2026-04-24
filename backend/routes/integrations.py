@@ -230,3 +230,31 @@ def import_github_projects(
         "total_imported": len(imported),
         "total_skipped": len(skipped),
     }
+
+
+# ==================== SLACK INTEGRATION ENDPOINTS ====================
+
+@router.get("/integrations/slack")
+def get_slack_config(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return current Slack webhook URL and global enabled state."""
+    return crud.get_slack_config(db)
+
+
+@router.put("/integrations/slack")
+def save_slack_config(
+    payload: dict = Body(...),
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db),
+):
+    """Save Slack webhook URL and global enabled state (Admin only)."""
+    webhook_url = (payload.get("webhook_url") or "").strip()
+    enabled = bool(payload.get("enabled", False))
+    if webhook_url and not webhook_url.startswith("https://hooks.slack.com/"):
+        raise HTTPException(
+            status_code=400,
+            detail="webhook_url must be a valid Slack incoming webhook URL (https://hooks.slack.com/...)",
+        )
+    return crud.save_slack_config(db, webhook_url, enabled)

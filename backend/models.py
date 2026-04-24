@@ -18,6 +18,8 @@ class Project(Base):
     integration_id = Column(Integer, ForeignKey('github_integrations.id'), nullable=True)  # Link to GitHub integration for authenticated cloning
     # Scheduled scan: NULL=inherit global, 1=enabled, 0=disabled
     scheduled_scan_enabled = Column(Integer, nullable=True, default=None)
+    # Slack notifications: NULL=inherit global, 1=enabled, 0=disabled
+    slack_notify_enabled = Column(Integer, nullable=True, default=None)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     scans = relationship("ScanResult", back_populates="project")
 

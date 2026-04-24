@@ -362,6 +362,21 @@ def _run_pr_scan(pr_scan_id: int, project_id: int, pr_number: int,
         _post_commit_status(access_token, owner, repo, head_sha,
                             gh_state, description, target_url=dashboard_url)
 
+        # ── Slack notification for blocked PRs ─────────────────────────────
+        if gh_state == "failure":
+            from ..slack import should_notify, send_slack_message
+            project = crud.get_project(db, project_id)
+            if project:
+                notify, webhook_url = should_notify(project, db)
+                if notify:
+                    repo_full = f"{owner}/{repo}"
+                    msg = (
+                        f":no_entry: *VulnMonk PR Scan Blocked* — `{repo_full}` PR #{pr_number}\n"
+                        f"{description}\n"
+                        f"<{dashboard_url}|View results>"
+                    )
+                    send_slack_message(webhook_url, msg)
+
         result_payload = {
             "results": filtered,
             "total": count,

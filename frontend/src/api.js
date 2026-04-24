@@ -562,3 +562,47 @@ export async function getSchedulerStatus() {
   if (!res.ok) throw new Error("Failed to load scheduler status");
   return res.json();
 }
+
+// ==================== SLACK INTEGRATION ENDPOINTS ====================
+
+export async function getSlackConfig() {
+  const res = await apiFetch(`${API_BASE}/integrations/slack`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to load Slack config");
+  return res.json();
+}
+
+export async function saveSlackConfig({ webhook_url, enabled }) {
+  const res = await apiFetch(`${API_BASE}/integrations/slack`, {
+    method: "PUT",
+    headers: getHeaders(),
+    body: JSON.stringify({ webhook_url, enabled })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to save Slack config");
+  }
+  return res.json();
+}
+
+export async function getProjectSlackNotify(projectId) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/slack-notify`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to load Slack notify setting");
+  return res.json();
+}
+
+export async function updateProjectSlackNotify(projectId, enabled) {
+  const res = await apiFetch(`${API_BASE}/projects/${projectId}/slack-notify`, {
+    method: "PUT",
+    headers: getHeaders(),
+    body: JSON.stringify({ enabled })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to update Slack notify setting");
+  }
+  return res.json();
+}

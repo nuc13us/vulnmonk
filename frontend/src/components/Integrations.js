@@ -9,7 +9,9 @@ import {
   importGitHubProjects,
   getCurrentUser,
   getGlobalPRCheckConfig,
-  saveGlobalPRCheckConfig
+  saveGlobalPRCheckConfig,
+  getSlackConfig,
+  saveSlackConfig
 } from "../api";
 
 function Integrations() {
@@ -33,6 +35,9 @@ function Integrations() {
   const [globalPrSeverity, setGlobalPrSeverity] = useState("none");
   const [globalPrThBlockOn, setGlobalPrThBlockOn] = useState("none");
   const [savingPrEnabled, setSavingPrEnabled] = useState(false);
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
+  const [slackEnabled, setSlackEnabled] = useState(false);
+  const [savingSlack, setSavingSlack] = useState(false);
   const [toast, setToast] = useState(null); // { type: "success"|"error", text }
 
   const loadUser = useCallback(async () => {
@@ -70,9 +75,20 @@ function Integrations() {
     }
   }, []);
 
+  const loadSlackConfig = useCallback(async () => {
+    try {
+      const cfg = await getSlackConfig();
+      setSlackWebhookUrl(cfg.webhook_url || "");
+      setSlackEnabled(cfg.enabled || false);
+    } catch (error) {
+      // Non-critical
+    }
+  }, []);
+
   useEffect(() => {
     loadUser();
     loadGlobalPrConfig();
+    loadSlackConfig();
 
     if (initialInstallationId) {
       // GitHub redirected back after App installation — strip the URL param and auto-sync
@@ -95,7 +111,7 @@ function Integrations() {
       loadIntegrations();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadUser, loadIntegrations, loadGlobalPrConfig, setSearchParams]);
+  }, [loadUser, loadIntegrations, loadGlobalPrConfig, loadSlackConfig, setSearchParams]);
 
   const handleRefresh = async () => {
     try {
@@ -338,6 +354,19 @@ function Integrations() {
       addLog("error", "Failed to save PR scan settings: " + error.message);
     } finally {
       setSavingPrEnabled(false);
+    }
+  };
+
+  const handleSaveSlack = async () => {
+    if (!isAdmin) return;
+    setSavingSlack(true);
+    try {
+      await saveSlackConfig({ webhook_url: slackWebhookUrl, enabled: slackEnabled });
+      addLog("success", "Slack settings saved");
+    } catch (error) {
+      addLog("error", "Failed to save Slack settings: " + error.message);
+    } finally {
+      setSavingSlack(false);
     }
   };
 
@@ -720,6 +749,83 @@ function Integrations() {
             </>
           )}
         </div>
+      </div>
+
+      {/* Slack Notifications Card — always visible */}
+      <div className="card" style={{ marginTop: "24px", padding: "20px 24px" }}>
+        <h3 style={{ margin: "0 0 4px", fontSize: "1rem", fontWeight: 700 }}>🔔 Slack Notifications</h3>
+        <p style={{ margin: "0 0 16px", fontSize: "0.85rem", color: "#6b7280" }}>
+          Receive Slack alerts when a PR scan is blocked and when daily scans find new issues.
+          Add an <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb" }}>Incoming Webhook URL</a> from your Slack workspace, then enable below.
+          Per-project overrides are available in <strong>Configurations</strong>.
+        </p>
+
+        <div style={{ marginBottom: "16px" }}>
+          <label style={{ display: "block", fontWeight: 600, fontSize: "0.9rem", marginBottom: "6px", color: "#374151" }}>
+            Slack Webhook URL {!isAdmin && <span style={{ color: "#dc2626", fontSize: "0.8rem" }}>(Admin only)</span>}
+          </label>
+          <input
+            type="url"
+            value={slackWebhookUrl}
+            onChange={e => setSlackWebhookUrl(e.target.value)}
+            placeholder="https://hooks.slack.com/services/T.../B.../..."
+            disabled={!isAdmin}
+            style={{
+              width: "100%",
+              padding: "9px 14px",
+              border: "2px solid #e5e7eb",
+              borderRadius: "6px",
+              fontSize: "0.9rem",
+              boxSizing: "border-box",
+              background: isAdmin ? "#fff" : "#f9fafb",
+              cursor: isAdmin ? "text" : "not-allowed"
+            }}
+          />
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+          <span style={{ fontWeight: 600, fontSize: "0.95rem", color: "#374151" }}>Global Slack Alerts</span>
+          <button
+            onClick={() => isAdmin && setSlackEnabled(v => !v)}
+            disabled={!isAdmin}
+            style={{
+              padding: "6px 20px",
+              borderRadius: "20px",
+              border: "none",
+              cursor: isAdmin ? "pointer" : "not-allowed",
+              fontWeight: 700,
+              fontSize: "0.9rem",
+              background: slackEnabled ? "#10b981" : "#e5e7eb",
+              color: slackEnabled ? "white" : "#6b7280",
+              minWidth: "70px",
+              transition: "all 0.2s"
+            }}
+          >
+            {slackEnabled ? "ON" : "OFF"}
+          </button>
+          <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+            Projects with <em>Inherit</em> will follow this setting.
+          </span>
+        </div>
+
+        {isAdmin && (
+          <button
+            onClick={handleSaveSlack}
+            disabled={savingSlack}
+            style={{
+              padding: "9px 22px",
+              background: "#2563eb",
+              color: "white",
+              border: "none",
+              borderRadius: "6px",
+              cursor: savingSlack ? "not-allowed" : "pointer",
+              fontWeight: 600,
+              fontSize: "0.9rem"
+            }}
+          >
+            {savingSlack ? "Saving…" : "Save Slack Settings"}
+          </button>
+        )}
       </div>
 
       {/* Logs Section */}
