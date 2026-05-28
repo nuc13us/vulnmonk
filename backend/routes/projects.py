@@ -15,7 +15,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List
 
-from .. import crud, models, schemas, auth
+from .. import crud, models, schemas, auth, github_app
 from ..database import get_db
 
 # Project root is 3 levels up from backend/routes/projects.py
@@ -425,11 +425,16 @@ def trigger_scan(
 
         if project.integration_id:
             integration = crud.get_github_integration(db, project.integration_id)
-            if integration and integration.access_token:
-                if clone_url.startswith("https://github.com/"):
+            if integration:
+                token = None
+                if integration.installation_id:
+                    token = github_app.get_installation_token(integration.installation_id)
+                elif integration.access_token:
+                    token = integration.access_token
+                if token and clone_url.startswith("https://github.com/"):
                     clone_url = clone_url.replace(
                         "https://github.com/",
-                        f"https://{integration.access_token}@github.com/"
+                        f"https://x-access-token:{token}@github.com/"
                     )
 
         subprocess.run(
@@ -965,11 +970,16 @@ def trigger_trufflehog_scan(
 
         if project.integration_id:
             integration = crud.get_github_integration(db, project.integration_id)
-            if integration and integration.access_token:
-                if clone_url.startswith("https://github.com/"):
+            if integration:
+                token = None
+                if integration.installation_id:
+                    token = github_app.get_installation_token(integration.installation_id)
+                elif integration.access_token:
+                    token = integration.access_token
+                if token and clone_url.startswith("https://github.com/"):
                     clone_url = clone_url.replace(
                         "https://github.com/",
-                        f"https://{integration.access_token}@github.com/"
+                        f"https://x-access-token:{token}@github.com/"
                     )
 
         subprocess.run(
