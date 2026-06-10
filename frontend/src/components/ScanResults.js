@@ -514,12 +514,12 @@ export default function ScanResults({ project, user }) {
     }
   };
 
-  const buildGitHubUrl = (path, line) => {
+  const buildGitHubUrl = (path, line, branch = "master") => {
     if (!project.github_url || !path) return null;
     // Remove .git suffix and construct file URL
     const baseUrl = project.github_url.replace(/\.git$/, "");
     const lineFragment = line ? `#L${line}` : "";
-    return `${baseUrl}/blob/master/${path}${lineFragment}`;
+    return `${baseUrl}/blob/${branch}/${path}${lineFragment}`;
   };
 
   const buildSemgrepUrl = (checkId) => {
@@ -1296,7 +1296,7 @@ export default function ScanResults({ project, user }) {
                       const vulClass = Array.isArray(vul.extra?.metadata?.vulnerability_class)
                         ? vul.extra.metadata.vulnerability_class.join(', ')
                         : vul.extra?.metadata?.vulnerability_class || '';
-                      const githubUrl = buildGitHubUrl(vul.path, vul.start?.line);
+                      const githubUrl = buildGitHubUrl(vul.path, vul.start?.line, prScanDetail.head_branch || 'master');
                       return (
                         <tr key={idx} onClick={() => setSelectedFinding(vul)} style={{ cursor: 'pointer' }} title="Click to view details">
                           <td>
@@ -1345,7 +1345,7 @@ export default function ScanResults({ project, user }) {
                       {(prScanDetail.result_json.trufflehog_results || []).map((f, idx) => {
                         const relPath = f._pr_file || f.SourceMetadata?.Data?.Filesystem?.file || '';
                         const line = f.SourceMetadata?.Data?.Filesystem?.line;
-                        const githubUrl = buildGitHubUrl(relPath, line);
+                        const githubUrl = buildGitHubUrl(relPath, line, prScanDetail.head_branch || 'master');
                         return (
                           <tr key={idx} onClick={() => setSelectedThFinding(f)} style={{ cursor: 'pointer' }} title="Click to view details">
                             <td>
