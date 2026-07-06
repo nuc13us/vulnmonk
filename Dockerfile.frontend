@@ -3,8 +3,12 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
+# Disable TLS verification (needed for corporate SSL-inspection proxies)
+ENV NODE_TLS_REJECT_UNAUTHORIZED=0
+RUN npm config set strict-ssl false
+
 COPY frontend/package*.json ./
-RUN npm ci --silent
+RUN npm ci --legacy-peer-deps
 
 COPY frontend/ .
 
@@ -14,6 +18,7 @@ COPY frontend/ .
 ARG REACT_APP_API_BASE_URL=
 ENV REACT_APP_API_BASE_URL=$REACT_APP_API_BASE_URL
 
+ENV PATH=/app/node_modules/.bin:$PATH
 RUN npm run build
 
 # ---- Serve stage ----

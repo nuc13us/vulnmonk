@@ -12,7 +12,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
     else \
         OPENGREP_URL="https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_aarch64"; \
     fi && \
-    curl -fsSL "$OPENGREP_URL" -o /usr/local/bin/opengrep && \
+    curl -fksSL "$OPENGREP_URL" -o /usr/local/bin/opengrep && \
     chmod +x /usr/local/bin/opengrep
 
 # Install TruffleHog binary (auto-detect arch: amd64 or arm64)
@@ -22,8 +22,8 @@ RUN ARCH=$(dpkg --print-architecture) && \
     else \
         TH_ARCH="arm64"; \
     fi && \
-    TH_VERSION=$(curl -fsSL https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/') && \
-    curl -fsSL "https://github.com/trufflesecurity/trufflehog/releases/latest/download/trufflehog_${TH_VERSION}_linux_${TH_ARCH}.tar.gz" | \
+    TH_VERSION=$(curl -fksSL https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/') && \
+    curl -fksSL "https://github.com/trufflesecurity/trufflehog/releases/latest/download/trufflehog_${TH_VERSION}_linux_${TH_ARCH}.tar.gz" | \
     tar -xz -C /usr/local/bin trufflehog && \
     chmod +x /usr/local/bin/trufflehog
 
@@ -31,9 +31,11 @@ WORKDIR /app
 
 # Install Python dependencies
 COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt
-
-# Copy application code
+    RUN pip install --no-cache-dir \
+        --trusted-host pypi.org \
+        --trusted-host pypi.python.org \
+        --trusted-host files.pythonhosted.org \
+        -r backend/requirements.txt
 COPY backend/ backend/
 
 # Copy utility scripts

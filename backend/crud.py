@@ -125,6 +125,21 @@ def create_user(db: Session, user: schemas.UserCreate, hashed_password: str):
     db.refresh(db_user)
     return db_user
 
+def get_or_create_google_user(db: Session, email: str):
+    """Find an existing user by email (used as username) or create a new one for Google SSO."""
+    user = db.query(models.User).filter(models.User.username == email).first()
+    if not user:
+        user = models.User(
+            username=email,
+            hashed_password="GOOGLE_OAUTH_USER",  # Sentinel — never matches any bcrypt hash
+            role="user",
+            is_active=1
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    return user
+
 def update_user_password(db: Session, user: models.User, hashed_password: str):
     user.hashed_password = hashed_password
     db.commit()

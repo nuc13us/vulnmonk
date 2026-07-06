@@ -32,6 +32,7 @@ services:
         # Only set this to override the default ("/api" via nginx proxy).
         # Example: REACT_APP_API_BASE_URL=https://api.example.com docker compose up --build
         REACT_APP_API_BASE_URL: ${REACT_APP_API_BASE_URL:-}
+        REACT_APP_GOOGLE_CLIENT_ID: ${REACT_APP_GOOGLE_CLIENT_ID:-}
     container_name: vulnmonk-frontend
     restart: unless-stopped
     ports:

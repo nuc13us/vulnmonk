@@ -79,6 +79,19 @@ export async function login(username, password) {
   return res.json();
 }
 
+export async function loginWithGoogle(idToken) {
+  const res = await fetch(`${API_BASE}/auth/google`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: idToken }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || "Google login failed");
+  }
+  return res.json();
+}
+
 export async function getCurrentUser() {
   const res = await apiFetch(`${API_BASE}/auth/me`, {
     headers: getHeaders()

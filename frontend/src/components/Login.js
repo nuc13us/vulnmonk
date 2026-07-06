@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { login, setAuthToken } from "../api";
+import { login, loginWithGoogle, setAuthToken } from "../api";
+import { GoogleLogin } from "@react-oauth/google";
 
 export default function Login({ onLoginSuccess }) {
   const [username, setUsername] = useState("");
@@ -171,6 +172,37 @@ export default function Login({ onLoginSuccess }) {
             {loading ? "Signing in..." : "Sign In"}
           </button>
         </form>
+
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          margin: "24px 0 20px",
+          gap: "12px"
+        }}>
+          <div style={{ flex: 1, height: "1px", background: "#e2e8f0" }} />
+          <span style={{ color: "#94a3b8", fontSize: "0.85rem", whiteSpace: "nowrap" }}>or continue with</span>
+          <div style={{ flex: 1, height: "1px", background: "#e2e8f0" }} />
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <GoogleLogin
+            onSuccess={async (credentialResponse) => {
+              setError("");
+              setLoading(true);
+              try {
+                const response = await loginWithGoogle(credentialResponse.credential);
+                setAuthToken(response.access_token);
+                onLoginSuccess();
+              } catch (err) {
+                setError(err.message || "Google login failed. Please try again.");
+              } finally {
+                setLoading(false);
+              }
+            }}
+            onError={() => setError("Google login failed. Please try again.")}
+            useOneTap={false}
+          />
+        </div>
       </div>
     </div>
   );

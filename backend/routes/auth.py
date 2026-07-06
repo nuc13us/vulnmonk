@@ -5,6 +5,8 @@ from .. import crud, models, schemas, auth
 from ..database import get_db
 from typing import List
 from datetime import timedelta
+import os
+import requests as http_requests
 
 router = APIRouter()
 
@@ -20,6 +22,49 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    access_token_expires = timedelta(days=auth.ACCESS_TOKEN_EXPIRE_DAYS)
+    access_token = auth.create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/auth/google", response_model=schemas.Token)
+def google_login(request: schemas.GoogleLoginRequest, db: Session = Depends(get_db)):
+    """Authenticate user via Google ID token and return a JWT token."""
+    google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+    if not google_client_id:
+        raise HTTPException(status_code=503, detail="Google SSO is not configured on this server")
+
+    try:
+        resp = http_requests.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            params={"id_token": request.token},
+            timeout=10,
+            verify=False
+        )
+    except Exception:
+        raise HTTPException(status_code=503, detail="Could not reach Google to verify token")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+
+    token_info = resp.json()
+
+    if token_info.get("aud") != google_client_id:
+        raise HTTPException(status_code=401, detail="Token audience mismatch")
+
+    if str(token_info.get("email_verified", "")).lower() != "true":
+        raise HTTPException(status_code=401, detail="Google email is not verified")
+
+    email = token_info.get("email")
+    if not email:
+        raise HTTPException(status_code=401, detail="No email in Google token")
+
+    user = crud.get_or_create_google_user(db, email)
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled")
 
     access_token_expires = timedelta(days=auth.ACCESS_TOKEN_EXPIRE_DAYS)
     access_token = auth.create_access_token(

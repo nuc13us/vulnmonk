@@ -61,6 +61,9 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
 
+class GoogleLoginRequest(BaseModel):
+    token: str  # Google ID token
+
 # Existing Schemas
 class ScanResultBase(BaseModel):
     scan_date: Optional[datetime] = None
