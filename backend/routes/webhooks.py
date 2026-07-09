@@ -18,7 +18,8 @@ import subprocess
 import tempfile
 
 import requests
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
+from starlette.requests import ClientDisconnect
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas, auth, github_app
@@ -416,7 +417,12 @@ async def github_webhook(
     - installation / installation_repositories  → manage GitHubIntegration records
     - pull_request (opened / synchronize / reopened) → trigger PR scan
     """
-    body = await request.body()
+    try:
+        body = await request.body()
+    except ClientDisconnect:
+        # GitHub closed the connection before we could read the body
+        # (e.g. their 10s delivery timeout). GitHub will retry automatically.
+        return Response(status_code=200)
 
     # ── Verify App webhook signature ───────────────────────────────────────
     sig_header = request.headers.get("X-Hub-Signature-256", "")
