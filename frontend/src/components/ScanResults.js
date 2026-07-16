@@ -16,9 +16,11 @@ function formatDate(dateStr) {
 // ─── Finding Detail Drawer ────────────────────────────────────────────────────
 function FindingDrawer({ finding, onClose, onMarkFP, onUnmarkFP, isAdmin }) {
   const [activeTab, setActiveTab] = useState('overview');
+  const [codeFlowSelection, setCodeFlowSelection] = useState(null);
 
   useEffect(() => {
     setActiveTab('overview');
+    setCodeFlowSelection(null);
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -123,13 +125,64 @@ function FindingDrawer({ finding, onClose, onMarkFP, onUnmarkFP, isAdmin }) {
               </Row>
               <Row label="Confidence">{meta.confidence}</Row>
               <Row label="Category">{meta.category}</Row>
-              {finding.extra?.lines && (
-                <div style={{ marginTop: '12px' }}>
-                  <div style={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '6px' }}>Matched Code</div>
-                  <pre style={{ background: '#0f172a', color: '#e2e8f0', padding: '12px 16px', borderRadius: '8px',
-                    fontSize: '0.82rem', overflowX: 'auto', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                    {finding.extra.lines}
-                  </pre>
+              {finding.start && finding.end && (
+                <div style={{ marginTop: '16px' }}>
+                  <div style={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', marginBottom: '10px' }}>Code Flow</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '16px 20px' }}>
+                    {/* Start node */}
+                    <div onClick={() => setCodeFlowSelection(codeFlowSelection === 'start' ? null : 'start')} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '90px', cursor: 'pointer' }}>
+                      <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: codeFlowSelection === 'start' ? '#22c55e' : '#dcfce7', border: '2px solid #22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '6px', transition: 'all 0.2s' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: codeFlowSelection === 'start' ? '#fff' : '#16a34a' }}>S</span>
+                      </div>
+                      <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>Start</span>
+                      <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#1e293b', marginTop: '2px' }}>
+                        L{finding.start.line}:C{finding.start.col}
+                      </span>
+                    </div>
+                    {/* Connector arrow */}
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', minWidth: '60px' }}>
+                      <div style={{ height: '2px', width: '100%', background: 'linear-gradient(90deg, #22c55e, #2563eb)', borderRadius: '1px' }} />
+                      <div style={{ position: 'absolute', right: '0', width: 0, height: 0, borderTop: '5px solid transparent', borderBottom: '5px solid transparent', borderLeft: '8px solid #2563eb' }} />
+                    </div>
+                    {/* End node */}
+                    <div onClick={() => setCodeFlowSelection(codeFlowSelection === 'end' ? null : 'end')} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '90px', cursor: 'pointer' }}>
+                      <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: codeFlowSelection === 'end' ? '#2563eb' : '#dbeafe', border: '2px solid #2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '6px', transition: 'all 0.2s' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: codeFlowSelection === 'end' ? '#fff' : '#2563eb' }}>E</span>
+                      </div>
+                      <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>End</span>
+                      <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#1e293b', marginTop: '2px' }}>
+                        L{finding.end.line}:C{finding.end.col}
+                      </span>
+                    </div>
+                  </div>
+                  {finding.start.line !== finding.end.line && (
+                    <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#64748b', textAlign: 'center' }}>
+                      Spans {finding.end.line - finding.start.line + 1} lines
+                    </div>
+                  )}
+                  {/* Code display on node click */}
+                  {codeFlowSelection && finding.extra?.lines && (
+                    <div style={{ marginTop: '12px', animation: 'fadeIn 0.2s ease' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: codeFlowSelection === 'start' ? '#22c55e' : '#2563eb' }} />
+                        <span style={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase' }}>
+                          {codeFlowSelection === 'start' ? `Start — Line ${finding.start.line}, Col ${finding.start.col}` : `End — Line ${finding.end.line}, Col ${finding.end.col}`}
+                        </span>
+                      </div>
+                      <pre style={{ background: '#0f172a', color: '#e2e8f0', padding: '12px 16px', borderRadius: '8px',
+                        fontSize: '0.82rem', overflowX: 'auto', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                        borderLeft: `3px solid ${codeFlowSelection === 'start' ? '#22c55e' : '#2563eb'}` }}>
+                        {(() => {
+                          const lines = finding.extra.lines.split('\n');
+                          if (codeFlowSelection === 'start') {
+                            return lines[0] || finding.extra.lines;
+                          } else {
+                            return lines[lines.length - 1] || finding.extra.lines;
+                          }
+                        })()}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -342,6 +395,7 @@ export default function ScanResults({ project, user }) {
   const [showLogs, setShowLogs] = useState(true);
   const [selectedFinding, setSelectedFinding] = useState(null);
   const pollRef = useRef(null);
+  const fpSectionRef = useRef(null);
 
   // PR scans state
   const [prScans, setPrScans] = useState([]);
@@ -354,6 +408,7 @@ export default function ScanResults({ project, user }) {
   const [thShowFalsePositives, setThShowFalsePositives] = useState(false);
   const [selectedThFinding, setSelectedThFinding] = useState(null);
   const thPollRef = useRef(null);
+  const thFpSectionRef = useRef(null);
 
   // Poll server scan status so the banner shows even after re-navigation
   useEffect(() => {
@@ -728,7 +783,13 @@ export default function ScanResults({ project, user }) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
               <h4 style={{ margin: 0 }}>Open Findings</h4>
               <button 
-                onClick={() => setShowFalsePositives(!showFalsePositives)}
+                onClick={() => {
+                  const next = !showFalsePositives;
+                  setShowFalsePositives(next);
+                  if (next) {
+                    setTimeout(() => fpSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+                  }
+                }}
                 className="secondary"
                 style={{ fontSize: "0.9rem", padding: "8px 16px" }}
               >
@@ -926,7 +987,7 @@ export default function ScanResults({ project, user }) {
           </div>
 
           {showFalsePositives && scanDetail.result_json?.false_positives && scanDetail.result_json.false_positives.length > 0 && (
-            <div className="scan-detail-section" style={{ marginTop: "32px" }}>
+            <div ref={fpSectionRef} className="scan-detail-section" style={{ marginTop: "32px" }}>
               <h4>False Positives</h4>
               <table>
                 <thead>
@@ -1043,7 +1104,13 @@ export default function ScanResults({ project, user }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                 <h4 style={{ margin: 0 }}>Open Secrets</h4>
                 <button
-                  onClick={() => setThShowFalsePositives(!thShowFalsePositives)}
+                  onClick={() => {
+                    const next = !thShowFalsePositives;
+                    setThShowFalsePositives(next);
+                    if (next) {
+                      setTimeout(() => thFpSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+                    }
+                  }}
                   className="secondary"
                   style={{ fontSize: "0.9rem", padding: "8px 16px" }}
                 >
@@ -1139,7 +1206,7 @@ export default function ScanResults({ project, user }) {
             </div>
 
             {thShowFalsePositives && thScanDetail.result_json?.false_positives && thScanDetail.result_json.false_positives.length > 0 && (
-              <div className="scan-detail-section" style={{ marginTop: "32px" }}>
+              <div ref={thFpSectionRef} className="scan-detail-section" style={{ marginTop: "32px" }}>
                 <h4>False Positives</h4>
                 <table>
                   <thead>
