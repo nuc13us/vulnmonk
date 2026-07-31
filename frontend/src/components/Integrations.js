@@ -157,13 +157,18 @@ function Integrations() {
     }
   };
 
-  const handleInstallApp = async () => {
+  const handleInstallApp = async (targetType = "") => {
     try {
       setLoading(true);
       addLog("info", "Fetching GitHub App install URL...");
-      const { install_url } = await getGitHubAppInstallUrl();
+      const { install_url } = await getGitHubAppInstallUrl(targetType);
       addLog("info", "Opening GitHub App installation page in a new tab...");
-      addLog("info", "After installing, come back here and click the refresh button.");
+      addLog(
+        "info",
+        targetType === "Organization"
+          ? "Select the organization you want to add, then come back and click ↻ Refresh."
+          : "Select the account or organization to install on, then come back and click ↻ Refresh."
+      );
       window.open(install_url, '_blank');
     } catch (error) {
       addLog("error", "Failed to get install URL: " + error.message);
@@ -480,14 +485,24 @@ function Integrations() {
         <h2>GitHub Integrations</h2>
         <div style={{ display: "flex", gap: "8px" }}>
           {isAdmin && (
-            <button
-              className="btn-primary github-connect-btn"
-              onClick={handleInstallApp}
-              disabled={loading || !ghAppSlug}
-              title={!ghAppSlug ? "Save GitHub App credentials (App Slug) first" : ""}
-            >
-              {loading ? "Loading..." : "🔗 Install GitHub App"}
-            </button>
+            <>
+              <button
+                className="btn-primary github-connect-btn"
+                onClick={() => handleInstallApp("Organization")}
+                disabled={loading || !ghAppSlug}
+                title={!ghAppSlug ? "Save GitHub App credentials (App Slug) first" : "Install on an organization account"}
+              >
+                {loading ? "Loading..." : "🏢 Add Org"}
+              </button>
+              <button
+                className="btn-secondary-small"
+                onClick={() => handleInstallApp("")}
+                disabled={loading || !ghAppSlug}
+                title={!ghAppSlug ? "Save GitHub App credentials (App Slug) first" : "Install on your personal account"}
+              >
+                👤 Add Personal
+              </button>
+            </>
           )}
           <button
             className="btn-secondary-small"
@@ -512,15 +527,26 @@ function Integrations() {
               </p>
               <p style={{ color: "#64748b", marginBottom: "24px", fontSize: "0.9rem" }}>
                 After installing, click <strong>↻ Refresh</strong> to see your installation here.
+                You can install on <strong>multiple organizations</strong> — just repeat for each one.
               </p>
-              <button
-                className="btn-primary"
-                onClick={handleInstallApp}
-                disabled={loading}
-                style={{ fontSize: "1.125rem", padding: "12px 32px" }}
-              >
-                Install GitHub App
-              </button>
+              <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
+                <button
+                  className="btn-primary"
+                  onClick={() => handleInstallApp("Organization")}
+                  disabled={loading}
+                  style={{ fontSize: "1.125rem", padding: "12px 32px" }}
+                >
+                  🏢 Install on an Organization
+                </button>
+                <button
+                  className="btn-secondary-small"
+                  onClick={() => handleInstallApp("")}
+                  disabled={loading}
+                  style={{ fontSize: "1rem", padding: "12px 24px" }}
+                >
+                  👤 Install on Personal Account
+                </button>
+              </div>
             </>
           ) : (
             <>

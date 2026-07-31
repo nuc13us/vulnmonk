@@ -14,15 +14,21 @@ router = APIRouter()
 
 @router.get("/integrations/github/app-install-url")
 def get_github_app_install_url(
+    target_type: str = "",
     current_user: models.User = Depends(auth.get_current_active_admin)
 ):
-    """Return the URL to install the GitHub App on an org or personal account."""
+    """Return the URL to install the GitHub App on an org or personal account.
+
+    Optional query param `target_type=Organization` restricts the GitHub
+    account picker to org accounts only, which avoids landing on an
+    already-installed personal account.
+    """
     if not github_app.get_slug():
         raise HTTPException(
             status_code=400,
             detail="GITHUB_APP_SLUG is not configured. Save your GitHub App credentials first (App Slug field).",
         )
-    return {"install_url": github_app.get_install_url()}
+    return {"install_url": github_app.get_install_url(target_type=target_type)}
 
 
 @router.post("/integrations/github/app/sync")

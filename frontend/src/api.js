@@ -326,8 +326,9 @@ export async function getAllGlobalConfigs() {
 
 // ==================== GITHUB INTEGRATION ENDPOINTS ====================
 
-export async function getGitHubAppInstallUrl() {
-  const res = await apiFetch(`${API_BASE}/integrations/github/app-install-url`, {
+export async function getGitHubAppInstallUrl(targetType = "") {
+  const qs = targetType ? `?target_type=${encodeURIComponent(targetType)}` : "";
+  const res = await apiFetch(`${API_BASE}/integrations/github/app-install-url${qs}`, {
     headers: getHeaders()
   });
   if (!res.ok) {

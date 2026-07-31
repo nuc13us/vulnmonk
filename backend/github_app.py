@@ -155,6 +155,14 @@ def verify_webhook_signature(body: bytes, sig_header: str) -> bool:
     return _hmac.compare_digest(expected, sig_header or "")
 
 
-def get_install_url() -> str:
-    """URL that opens the GitHub App installation page for a new org/account."""
-    return f"https://github.com/apps/{_config['slug']}/installations/new"
+def get_install_url(target_type: str = "") -> str:
+    """URL that opens the GitHub App installation page for a new org/account.
+
+    Args:
+        target_type: Optional filter — pass "Organization" to show only org
+                     accounts on the GitHub picker page.
+    """
+    base = f"https://github.com/apps/{_config['slug']}/installations/new"
+    if target_type:
+        return f"{base}?target_type={target_type}"
+    return base
