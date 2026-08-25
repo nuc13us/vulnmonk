@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from "react";
-import { getScans, getScanDetail, triggerScan, markFalsePositive, unmarkFalsePositive, getScanStatus, getPRScans, getPRScanDetail, triggerTrufflehogScan, getTrufflehogScanStatus, getTrufflehogScans, getTrufflehogScanDetail, markTrufflehogFalsePositive, unmarkTrufflehogFalsePositive } from "../api";
+import { getScans, getScanDetail, triggerScan, markFalsePositive, unmarkFalsePositive, getScanStatus, getPRScans, getPRScanDetail, forcePassPRScan, triggerTrufflehogScan, getTrufflehogScanStatus, getTrufflehogScans, getTrufflehogScanDetail, markTrufflehogFalsePositive, unmarkTrufflehogFalsePositive } from "../api";
 
 // Parse date string from backend (may be missing Z suffix) and format in user's local timezone
 function formatDate(dateStr) {
@@ -1327,10 +1327,37 @@ export default function ScanResults({ project, user }) {
                 <h4 style={{ margin: '0 0 4px 0' }}>
                   PR #{prScanDetail.pr_number}: {prScanDetail.pr_title}
                 </h4>
-                <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: '#64748b', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: '12px', fontSize: '0.85rem', color: '#64748b', flexWrap: 'wrap', alignItems: 'center' }}>
                   <span>🌿 {prScanDetail.head_branch} → {prScanDetail.base_branch}</span>
                   <span>🔗 {prScanDetail.head_sha?.slice(0, 8)}</span>
                   <span>Status: {prStatusBadge(prScanDetail.status)}</span>
+                  {isAdmin && prScanDetail.status !== 'pending' && (
+                    <button
+                      className="secondary"
+                      style={{ fontSize: '0.78rem', padding: '4px 10px', marginLeft: '8px',
+                        background: prScanDetail.status === 'success' ? '#dcfce7' : '#fef3c7',
+                        color: prScanDetail.status === 'success' ? '#166534' : '#92400e',
+                        border: `1px solid ${prScanDetail.status === 'success' ? '#86efac' : '#fcd34d'}` }}
+                      onClick={async () => {
+                        if (!window.confirm(
+                          prScanDetail.status === 'failure'
+                            ? 'Force-pass this PR scan? This will override the block and send a success status to GitHub.'
+                            : 'Re-send success status to GitHub for this PR scan?'
+                        )) return;
+                        try {
+                          await forcePassPRScan(prScanDetail.id);
+                          const updated = await getPRScanDetail(prScanDetail.id);
+                          setPrScanDetail(updated);
+                          getPRScans(project.id).then(setPrScans).catch(() => {});
+                        } catch (err) {
+                          alert(err.message || 'Failed to force-pass PR scan');
+                        }
+                      }}
+                      title={prScanDetail.status === 'failure' ? 'Override block and pass this PR' : 'Re-send success status to GitHub'}
+                    >
+                      {prScanDetail.status === 'failure' ? '✅ Force Pass' : '🔄 Re-send Pass'}
+                    </button>
+                  )}
                 </div>
                 <div style={{ marginTop: '8px', fontSize: '0.85rem', color: '#64748b' }}>
                   <strong>Changed files scanned:</strong>{' '}

@@ -460,6 +460,18 @@ export async function getPRScanDetail(prScanId) {
   return res.json();
 }
 
+export async function forcePassPRScan(prScanId) {
+  const res = await apiFetch(`${API_BASE}/pr-scans/${prScanId}/force-pass`, {
+    method: "POST",
+    headers: getHeaders()
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || "Failed to force-pass PR scan");
+  }
+  return res.json();
+}
+
 export async function getGlobalPRCheckConfig() {
   const res = await apiFetch(`${API_BASE}/configurations/global/pr-checks`, {
     headers: getHeaders()

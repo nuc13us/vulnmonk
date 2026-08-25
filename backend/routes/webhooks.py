@@ -668,3 +668,77 @@ def get_pr_scan_detail(
         "changed_files": scan.changed_files or [],
         "created_at": scan.created_at.isoformat() if scan.created_at else None,
     }
+
+
+@router.post("/pr-scans/{pr_scan_id}/force-pass")
+def force_pass_pr_scan(
+    pr_scan_id: int,
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Admin-only: force-pass a PR scan by updating its status to 'success'
+    and re-sending a success commit status to GitHub.
+    Useful when GitHub missed the original status (outage) or to override a block.
+    """
+    scan = crud.get_pr_scan(db, pr_scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail="PR scan not found")
+
+    repo_full_name = scan.repo_full_name
+    if not repo_full_name or "/" not in repo_full_name:
+        raise HTTPException(status_code=400, detail="PR scan has no valid repo_full_name")
+
+    owner, repo_name = repo_full_name.split("/", 1)
+
+    # Resolve GitHub access token via the project's integration
+    project = crud.get_project(db, scan.project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    access_token = _resolve_github_token(db, project, owner)
+    if not access_token:
+        raise HTTPException(status_code=500,
+                            detail="Could not resolve GitHub access token for this project")
+
+    # Post success status to GitHub
+    dashboard_url = _build_pr_scan_dashboard_url(project.id, scan.pr_number)
+    _post_commit_status(
+        access_token, owner, repo_name, scan.head_sha,
+        "success",
+        "PR scan force-passed by admin.",
+        target_url=dashboard_url,
+    )
+
+    # Update DB record
+    crud.update_pr_scan(db, pr_scan_id, "success", scan.findings_count, scan.result_json)
+
+    return {"status": "success", "message": "PR scan force-passed and GitHub status updated"}
+
+
+def _resolve_github_token(db: Session, project: models.Project, owner: str) -> str | None:
+    """Resolve a GitHub access token for API calls on a project's repo."""
+    # Try the project's linked integration
+    integration = None
+    if project.integration_id:
+        integration = crud.get_github_integration(db, project.integration_id)
+
+    if not integration:
+        integrations = crud.get_github_integrations(db)
+        integration = next(
+            (i for i in integrations if owner in (i.org_name, f"{owner} (Personal)")),
+            None,
+        )
+
+    if not integration:
+        return None
+
+    # GitHub App installation → mint a fresh token
+    if integration.installation_id and github_app.is_configured():
+        try:
+            return github_app.get_installation_token(integration.installation_id)
+        except Exception:
+            return None
+
+    # Fallback to stored OAuth token
+    return integration.access_token or None
