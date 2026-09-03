@@ -488,7 +488,7 @@ def update_pr_scan(db: Session, pr_scan_id: int, status: str,
     return record
 
 
-def get_pr_scans(db: Session, project_id: int, limit: int = 50):
+def get_pr_scans(db: Session, project_id: int, limit: int = 200):
     """List PR scans for a project, newest first."""
     return db.query(models.PRScanResult).filter(
         models.PRScanResult.project_id == project_id
