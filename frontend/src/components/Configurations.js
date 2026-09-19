@@ -549,6 +549,247 @@ export default function Configurations({ user }) {
     }
   };
 
+  const globalConfigurationsPanel = isAdmin ? (
+    <div className="global-config-section">
+      <div className="global-config-header">
+        <h3>🌍 Global Configurations (All Projects)</h3>
+        <p>These settings apply to every project unless overridden per-project above.</p>
+      </div>
+
+      <div className="global-config-grid">
+        {/* Global Exclude Rules */}
+        <div className="global-config-card">
+          <h5>🚫 Global Exclude Rules</h5>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+            <input
+              type="text"
+              value={newGlobalExcludeRule}
+              onChange={e => setNewGlobalExcludeRule(e.target.value)}
+              placeholder="Enter global exclude rule ID"
+              onKeyPress={(e) => e.key === 'Enter' && handleAddGlobalExcludeRule()}
+              style={{ 
+                flex: 1, 
+                padding: "10px 14px",
+                border: "2px solid #e5e7eb",
+                borderRadius: "8px",
+                fontSize: "0.9rem"
+              }}
+              disabled={saving}
+            />
+            <button 
+              onClick={handleAddGlobalExcludeRule}
+              disabled={saving || !newGlobalExcludeRule.trim()}
+              className="primary-btn"
+              style={{ padding: "10px 24px", whiteSpace: "nowrap" }}
+            >
+              {saving ? "Adding..." : "Add"}
+            </button>
+          </div>
+          
+          {globalExcludeRules && getRulesCount(globalExcludeRules) > 0 && (
+            <div className="rules-tags">
+              {globalExcludeRules.split(",").map((rule, idx) => {
+                const trimmedRule = rule.trim();
+                if (!trimmedRule) return null;
+                return (
+                  <span key={idx} className="rule-tag-removable" style={{ background: "#fef3c7", color: "#92400e" }}>
+                    {trimmedRule}
+                    <button 
+                      className="rule-remove-btn"
+                      onClick={() => handleRemoveGlobalExcludeRule(trimmedRule)}
+                      disabled={saving}
+                      title="Remove this global rule"
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        
+        {/* Global Include Rules */}
+        <div className="global-config-card">
+          <h5>✅ Global Include Rules (YAML)</h5>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+            <label 
+              htmlFor="global-include-file-upload" 
+              style={{ 
+                flex: 1, 
+                padding: "10px 14px",
+                border: "2px solid #e5e7eb",
+                borderRadius: "8px",
+                fontSize: "0.9rem",
+                cursor: "pointer",
+                background: "#fff",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px"
+              }}
+            >
+              📁 Choose YAML file...
+              <input
+                id="global-include-file-upload"
+                type="file"
+                accept=".yaml,.yml"
+                onChange={handleGlobalIncludeFileUpload}
+                disabled={saving}
+                style={{ display: "none" }}
+              />
+            </label>
+            {globalIncludeYamlFiles.length > 0 && (
+              <button 
+                onClick={handleClearGlobalIncludeRules}
+                disabled={saving}
+                className="secondary"
+                style={{ padding: "10px 20px", whiteSpace: "nowrap" }}
+              >
+                Clear
+              </button>
+            )}
+            <button 
+              onClick={handleSaveGlobalIncludeRules}
+              disabled={saving}
+              className="primary-btn"
+              style={{ padding: "10px 24px", whiteSpace: "nowrap" }}
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </div>
+          
+          {globalIncludeYamlFiles.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {globalIncludeYamlFiles.map((file, index) => {
+                return (
+                  <div key={index} style={{ 
+                    padding: "10px 12px", 
+                    background: "#fff", 
+                    border: "1px solid #fcd34d", 
+                    borderRadius: "6px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between"
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#92400e" }}>
+                        📄 {file.filename}
+                      </div>
+                      <div style={{ fontSize: "0.8rem", color: "#a16207", marginTop: "4px" }}>
+                        Added {new Date(file.uploadedAt).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleRemoveGlobalIncludeFile(index)}
+                      disabled={saving}
+                      style={{
+                        padding: "6px 12px",
+                        background: "#dc2626",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "0.85rem",
+                        fontWeight: 600
+                      }}
+                      title="Remove this global file"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Global TruffleHog Exclude Detectors */}
+        <div className="global-config-card">
+          <h5>🔑 Global TruffleHog Exclude Detectors</h5>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+            <input
+              type="text"
+              value={newGlobalThDetector}
+              onChange={e => setNewGlobalThDetector(e.target.value)}
+              placeholder="Enter detector name (e.g., AWS, Npm)"
+              onKeyPress={(e) => e.key === 'Enter' && handleAddGlobalThDetector()}
+              style={{ 
+                flex: 1, 
+                padding: "10px 14px",
+                border: "2px solid #e5e7eb",
+                borderRadius: "8px",
+                fontSize: "0.9rem"
+              }}
+              disabled={saving}
+            />
+            <button 
+              onClick={handleAddGlobalThDetector}
+              disabled={saving || !newGlobalThDetector.trim()}
+              className="primary-btn"
+              style={{ padding: "10px 24px", whiteSpace: "nowrap", background: "#7c3aed" }}
+            >
+              {saving ? "Adding..." : "Exclude"}
+            </button>
+          </div>
+          
+          {globalThExcludeDetectors && getThDetectorsCount(globalThExcludeDetectors) > 0 && (
+            <div className="rules-tags">
+              {globalThExcludeDetectors.split(",").map((det, idx) => {
+                const trimmedDet = det.trim();
+                if (!trimmedDet) return null;
+                return (
+                  <span key={idx} className="rule-tag-removable" style={{ background: "#ede9fe", color: "#5b21b6" }}>
+                    {trimmedDet}
+                    <button 
+                      className="rule-remove-btn"
+                      onClick={() => handleRemoveGlobalThDetector(trimmedDet)}
+                      disabled={saving}
+                      title="Remove this global detector"
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Global Scheduled Scans */}
+        <div className="global-config-card">
+          <h5>🕐 Global Daily Scheduled Scans</h5>
+          <p style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "12px" }}>
+            When enabled, all projects that haven't opted out will automatically run both OpenGrep and TruffleHog scans once per day. Scan time is configured via the <code>SCHEDULED_SCAN_HOUR</code> / <code>SCHEDULED_SCAN_MINUTE</code> environment variables (defaults to 02:00 UTC).
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <button
+              onClick={() => handleToggleGlobalScheduledScan(!globalScheduledScan)}
+              disabled={saving}
+              style={{
+                padding: "8px 22px",
+                borderRadius: "20px",
+                border: "none",
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: "0.9rem",
+                background: globalScheduledScan ? "#10b981" : "#e5e7eb",
+                color: globalScheduledScan ? "white" : "#6b7280",
+                transition: "all 0.2s"
+              }}
+            >
+              {globalScheduledScan ? "Enabled" : "Disabled"}
+            </button>
+            {schedulerNextRun && (
+              <span style={{ fontSize: "0.85rem", color: "#64748b" }}>
+                Next run: {new Date(schedulerNextRun).toLocaleString()}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="configurations-container">
       <div className="config-header">
@@ -558,6 +799,12 @@ export default function Configurations({ user }) {
           {!isAdmin && <span style={{ color: "#dc2626", fontWeight: 600, marginLeft: "8px" }}>🔒 View-only mode</span>}
         </p>
       </div>
+
+      {message && (
+        <div className={`config-message config-message-${message.type}`}>
+          {message.text}
+        </div>
+      )}
 
       <div className="config-layout">
         {/* Projects List */}
@@ -710,12 +957,6 @@ export default function Configurations({ user }) {
               <p style={{ color: "#64748b", marginBottom: "16px", fontSize: "0.9rem" }}>
                 Managing rules for: <strong>{selectedProject.github_url.replace(/\.git$/, "").split("/").filter(s => s && !s.includes(':')).slice(-2).join('/')}</strong>
               </p>
-
-              {message && (
-                <div className={`config-message config-message-${message.type}`}>
-                  {message.text}
-                </div>
-              )}
 
               {/* Exclude Rules Section */}
               <div className="config-section">
@@ -1160,264 +1401,6 @@ export default function Configurations({ user }) {
                 </div>
               </div>
 
-              {/* Global Rules Section (Admin Only) */}
-              {isAdmin && (
-                <>
-                <div className="config-section" style={{ marginTop: "32px", borderTop: "2px solid #e5e7eb", paddingTop: "32px" }}>
-                  <h4 style={{ fontSize: "1.05rem", marginBottom: "16px", fontWeight: 700, color: "#0f172a" }}>
-                    🌍 Global Rules (All Projects)
-                  </h4>
-                  
-                  {/* Global Exclude Rules */}
-                  <div style={{ marginBottom: "24px" }}>
-                    <h5 style={{ fontSize: "0.95rem", marginBottom: "12px", fontWeight: 600 }}>
-                      Global Exclude Rules
-                    </h5>
-                    <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-                      <input
-                        type="text"
-                        value={newGlobalExcludeRule}
-                        onChange={e => setNewGlobalExcludeRule(e.target.value)}
-                        placeholder="Enter global exclude rule ID"
-                        onKeyPress={(e) => e.key === 'Enter' && handleAddGlobalExcludeRule()}
-                        style={{ 
-                          flex: 1, 
-                          padding: "10px 14px",
-                          border: "2px solid #e5e7eb",
-                          borderRadius: "8px",
-                          fontSize: "0.9rem"
-                        }}
-                        disabled={saving}
-                      />
-                      <button 
-                        onClick={handleAddGlobalExcludeRule}
-                        disabled={saving || !newGlobalExcludeRule.trim()}
-                        className="primary-btn"
-                        style={{ padding: "10px 24px", whiteSpace: "nowrap" }}
-                      >
-                        {saving ? "Adding..." : "Add Global Rule"}
-                      </button>
-                    </div>
-                    
-                    {globalExcludeRules && getRulesCount(globalExcludeRules) > 0 && (
-                      <div>
-                        <div className="rules-tags">
-                          {globalExcludeRules.split(",").map((rule, idx) => {
-                            const trimmedRule = rule.trim();
-                            if (!trimmedRule) return null;
-                            return (
-                              <span key={idx} className="rule-tag-removable" style={{ background: "#fef3c7", color: "#92400e" }}>
-                                {trimmedRule}
-                                <button 
-                                  className="rule-remove-btn"
-                                  onClick={() => handleRemoveGlobalExcludeRule(trimmedRule)}
-                                  disabled={saving}
-                                  title="Remove this global rule"
-                                >
-                                  ×
-                                </button>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Global Include Rules */}
-                  <div>
-                    <h5 style={{ fontSize: "0.95rem", marginBottom: "12px", fontWeight: 600 }}>
-                      Global Include Rules (YAML)
-                    </h5>
-                    <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-                      <label 
-                        htmlFor="global-include-file-upload" 
-                        style={{ 
-                          flex: 1, 
-                          padding: "10px 14px",
-                          border: "2px solid #e5e7eb",
-                          borderRadius: "8px",
-                          fontSize: "0.9rem",
-                          cursor: "pointer",
-                          background: "#fff",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px"
-                        }}
-                      >
-                        📁 Choose YAML file to add...
-                        <input
-                          id="global-include-file-upload"
-                          type="file"
-                          accept=".yaml,.yml"
-                          onChange={handleGlobalIncludeFileUpload}
-                          disabled={saving}
-                          style={{ display: "none" }}
-                        />
-                      </label>
-                      {globalIncludeYamlFiles.length > 0 && (
-                        <button 
-                          onClick={handleClearGlobalIncludeRules}
-                          disabled={saving}
-                          className="secondary"
-                          style={{ padding: "10px 20px", whiteSpace: "nowrap" }}
-                        >
-                          Clear All
-                        </button>
-                      )}
-                      <button 
-                        onClick={handleSaveGlobalIncludeRules}
-                        disabled={saving}
-                        className="primary-btn"
-                        style={{ padding: "10px 24px", whiteSpace: "nowrap" }}
-                      >
-                        {saving ? "Saving..." : "Save"}
-                      </button>
-                    </div>
-                    
-                    {globalIncludeYamlFiles.length > 0 && (
-                      <div style={{ marginTop: "12px" }}>
-                        <h5 style={{ fontSize: "0.9rem", marginBottom: "8px", fontWeight: 600 }}>
-                          Global YAML Files ({globalIncludeYamlFiles.length})
-                        </h5>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                          {globalIncludeYamlFiles.map((file, index) => {
-                            return (
-                              <div key={index} style={{ 
-                                padding: "10px 12px", 
-                                background: "#fef3c7", 
-                                border: "1px solid #fcd34d", 
-                                borderRadius: "6px",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between"
-                              }}>
-                                <div style={{ flex: 1 }}>
-                                  <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#92400e" }}>
-                                    🌍 {file.filename}
-                                  </div>
-                                  <div style={{ fontSize: "0.8rem", color: "#a16207", marginTop: "4px" }}>
-                                    Added {new Date(file.uploadedAt).toLocaleDateString()}
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={() => handleRemoveGlobalIncludeFile(index)}
-                                  disabled={saving}
-                                  style={{
-                                    padding: "6px 12px",
-                                    background: "#dc2626",
-                                    color: "white",
-                                    border: "none",
-                                    borderRadius: "4px",
-                                    cursor: "pointer",
-                                    fontSize: "0.85rem",
-                                    fontWeight: 600
-                                  }}
-                                  title="Remove this global file"
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Global TruffleHog Exclude Detectors */}
-                <div className="config-section" style={{ marginTop: "24px" }}>
-                  <h5 style={{ fontSize: "0.95rem", marginBottom: "12px", fontWeight: 600 }}>
-                    Global TruffleHog Exclude Detectors
-                  </h5>
-                  <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-                    <input
-                      type="text"
-                      value={newGlobalThDetector}
-                      onChange={e => setNewGlobalThDetector(e.target.value)}
-                      placeholder="Enter detector name (e.g., AWS, Npm)"
-                      onKeyPress={(e) => e.key === 'Enter' && handleAddGlobalThDetector()}
-                      style={{ 
-                        flex: 1, 
-                        padding: "10px 14px",
-                        border: "2px solid #e5e7eb",
-                        borderRadius: "8px",
-                        fontSize: "0.9rem"
-                      }}
-                      disabled={saving}
-                    />
-                    <button 
-                      onClick={handleAddGlobalThDetector}
-                      disabled={saving || !newGlobalThDetector.trim()}
-                      className="primary-btn"
-                      style={{ padding: "10px 24px", whiteSpace: "nowrap", background: "#7c3aed" }}
-                    >
-                      {saving ? "Adding..." : "Exclude Detector Global"}
-                    </button>
-                  </div>
-                  
-                  {globalThExcludeDetectors && getThDetectorsCount(globalThExcludeDetectors) > 0 && (
-                    <div>
-                      <div className="rules-tags">
-                        {globalThExcludeDetectors.split(",").map((det, idx) => {
-                          const trimmedDet = det.trim();
-                          if (!trimmedDet) return null;
-                          return (
-                            <span key={idx} className="rule-tag-removable" style={{ background: "#ede9fe", color: "#5b21b6" }}>
-                              {trimmedDet}
-                              <button 
-                                className="rule-remove-btn"
-                                onClick={() => handleRemoveGlobalThDetector(trimmedDet)}
-                                disabled={saving}
-                                title="Remove this global detector"
-                              >
-                                ×
-                              </button>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Global Scheduled Scans */}
-                <div className="config-section" style={{ marginTop: "24px" }}>
-                  <h5 style={{ fontSize: "0.95rem", marginBottom: "8px", fontWeight: 600 }}>
-                    🕐 Global Daily Scheduled Scans
-                  </h5>
-                  <p style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "12px" }}>
-                    When enabled, all projects that haven't opted out will automatically run both OpenGrep and TruffleHog scans once per day. The scan time can be changed via the <code>SCHEDULED_SCAN_HOUR</code> / <code>SCHEDULED_SCAN_MINUTE</code> environment variables (defaults to 02:00 UTC).
-                  </p>
-                  <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                    <button
-                      onClick={() => handleToggleGlobalScheduledScan(!globalScheduledScan)}
-                      disabled={saving}
-                      style={{
-                        padding: "8px 22px",
-                        borderRadius: "20px",
-                        border: "none",
-                        cursor: "pointer",
-                        fontWeight: 600,
-                        fontSize: "0.9rem",
-                        background: globalScheduledScan ? "#10b981" : "#e5e7eb",
-                        color: globalScheduledScan ? "white" : "#6b7280",
-                        transition: "all 0.2s"
-                      }}
-                    >
-                      {globalScheduledScan ? "Enabled" : "Disabled"}
-                    </button>
-                    {schedulerNextRun && (
-                      <span style={{ fontSize: "0.85rem", color: "#64748b" }}>
-                        Next run: {new Date(schedulerNextRun).toLocaleString()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                </>
-              )}
             </>
           ) : (
             <div className="config-empty-state">
@@ -1428,6 +1411,8 @@ export default function Configurations({ user }) {
           )}
         </div>
       </div>
+
+      {globalConfigurationsPanel}
     </div>
   );
 }
