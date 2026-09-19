@@ -171,6 +171,24 @@ class GlobalConfig(GlobalConfigBase):
         from_attributes = True
 
 # GitHub Integration Schemas
+class GitHubAppConfigBase(BaseModel):
+    name: Optional[str] = ""
+    app_id: str
+    slug: str
+    webhook_secret: Optional[str] = ""
+
+class GitHubAppConfigCreate(GitHubAppConfigBase):
+    private_key_pem: str
+
+class GitHubAppConfig(GitHubAppConfigBase):
+    id: int
+    private_key_pem: str
+    is_active: bool = True
+    created_at: datetime
+    updated_at: datetime
+    class Config:
+        from_attributes = True
+
 class GitHubIntegrationBase(BaseModel):
     org_name: str
 
@@ -178,11 +196,13 @@ class GitHubIntegrationCreate(GitHubIntegrationBase):
     access_token: Optional[str] = ""
     organizations: Optional[List[str]] = []
     installation_id: Optional[int] = None
+    app_config_id: Optional[int] = None
     account_type: Optional[str] = "User"
 
 class GitHubIntegration(GitHubIntegrationBase):
     id: int
     installation_id: Optional[int] = None
+    app_config_id: Optional[int] = None
     account_type: Optional[str] = "User"
     organizations: Optional[List[str]] = []
     created_at: datetime

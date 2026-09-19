@@ -426,7 +426,13 @@ async def github_webhook(
 
     # ── Verify App webhook signature ───────────────────────────────────────
     sig_header = request.headers.get("X-Hub-Signature-256", "")
-    if not github_app.verify_webhook_signature(body, sig_header):
+    payload_installation_id = payload.get("installation", {}).get("id") if payload else None
+    webhook_secret = None
+    if payload_installation_id:
+        integration = crud.get_github_integration_by_installation_id(db, payload_installation_id)
+        app_cfg = crud.get_github_app_config_for_integration(db, integration)
+        webhook_secret = app_cfg.get("webhook_secret")
+    if not github_app.verify_webhook_signature(body, sig_header, webhook_secret=webhook_secret):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     # ── Parse payload ──────────────────────────────────────────────────────
@@ -477,29 +483,29 @@ async def github_webhook(
 
     # ── Get installation access token ──────────────────────────────────────
     installation_id = payload.get("installation", {}).get("id")
+    integration = None
+    if installation_id:
+        integration = crud.get_github_integration_by_installation_id(db, installation_id)
     if not installation_id:
         # Fall back to stored OAuth token if no installation context
         integration = crud.get_github_integration(db, project.integration_id) if project.integration_id else None
         if not integration:
             owner = repo_full_name.split("/")[0]
-            integrations = crud.get_github_integrations(db)
-            integration = next(
-                (i for i in integrations if owner in (i.org_name, f"{owner} (Personal)")),
-                None,
-            )
+            integration = crud.get_github_integration_for_repo_owner(db, owner)
         if not integration:
             raise HTTPException(status_code=400,
                                 detail=f"No GitHub integration found for '{repo_full_name}'")
         access_token = integration.access_token
-    elif github_app.is_configured():
+    else:
+        app_cfg = crud.get_github_app_config_for_integration(db, integration)
+        if not app_cfg or not app_cfg.get("app_id") or not app_cfg.get("private_key"):
+            raise HTTPException(status_code=500,
+                                detail="GitHub App credentials not configured for this installation. Configure the app on the Integrations page.")
         try:
-            access_token = github_app.get_installation_token(installation_id)
+            access_token = github_app.get_installation_token(installation_id, app_config=app_cfg)
         except Exception as exc:
             raise HTTPException(status_code=500,
                                 detail=f"Failed to mint installation token: {exc}")
-    else:
-        raise HTTPException(status_code=500,
-                            detail="GitHub App credentials not configured (GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY)")
 
     # ── Extract PR details ─────────────────────────────────────────────────
     pr = payload.get("pull_request", {})
@@ -718,27 +724,22 @@ def force_pass_pr_scan(
 
 def _resolve_github_token(db: Session, project: models.Project, owner: str) -> str | None:
     """Resolve a GitHub access token for API calls on a project's repo."""
-    # Try the project's linked integration
     integration = None
     if project.integration_id:
         integration = crud.get_github_integration(db, project.integration_id)
 
     if not integration:
-        integrations = crud.get_github_integrations(db)
-        integration = next(
-            (i for i in integrations if owner in (i.org_name, f"{owner} (Personal)")),
-            None,
-        )
+        integration = crud.get_github_integration_for_repo_owner(db, owner)
 
     if not integration:
         return None
 
-    # GitHub App installation → mint a fresh token
-    if integration.installation_id and github_app.is_configured():
-        try:
-            return github_app.get_installation_token(integration.installation_id)
-        except Exception:
-            return None
+    if integration.installation_id:
+        app_cfg = crud.get_github_app_config_for_integration(db, integration)
+        if app_cfg and app_cfg.get("app_id") and app_cfg.get("private_key"):
+            try:
+                return github_app.get_installation_token(integration.installation_id, app_config=app_cfg)
+            except Exception:
+                return None
 
-    # Fallback to stored OAuth token
     return integration.access_token or None

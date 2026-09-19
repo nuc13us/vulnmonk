@@ -44,12 +44,14 @@ def _build_clone_url(project, db) -> str:
 
     if integration.installation_id:
         try:
-            token = get_installation_token(integration.installation_id)
-            if clone_url.startswith("https://github.com/"):
-                clone_url = clone_url.replace(
-                    "https://github.com/",
-                    f"https://x-access-token:{token}@github.com/",
-                )
+            app_cfg = crud.get_github_app_config_for_integration(db, integration)
+            if app_cfg and app_cfg.get("app_id") and app_cfg.get("private_key"):
+                token = get_installation_token(integration.installation_id, app_config=app_cfg)
+                if clone_url.startswith("https://github.com/"):
+                    clone_url = clone_url.replace(
+                        "https://github.com/",
+                        f"https://x-access-token:{token}@github.com/",
+                    )
         except Exception as exc:
             logger.warning(
                 "Scheduled scan: failed to get installation token for project %d: %s",

@@ -12,8 +12,8 @@ import {
   saveGlobalPRCheckConfig,
   getSlackConfig,
   saveSlackConfig,
-  getGitHubAppConfig,
-  saveGitHubAppConfig
+  getGitHubAppConfigs,
+  createGitHubAppConfig
 } from "../api";
 
 function Integrations() {
@@ -43,14 +43,14 @@ function Integrations() {
   const [savingSlack, setSavingSlack] = useState(false);
   const [toast, setToast] = useState(null); // { type: "success"|"error", text }
 
-  // GitHub App credentials state
-  const [ghAppId, setGhAppId] = useState("");
-  const [ghAppSlug, setGhAppSlug] = useState("");
-  const [ghPrivateKeyFile, setGhPrivateKeyFile] = useState(null);
-  const [ghWebhookSecret, setGhWebhookSecret] = useState("");
-  const [ghPrivateKeyConfigured, setGhPrivateKeyConfigured] = useState(false);
-  const [ghWebhookSecretConfigured, setGhWebhookSecretConfigured] = useState(false);
-  const [savingGhApp, setSavingGhApp] = useState(false);
+  const [githubApps, setGithubApps] = useState([]);
+  const [showAppForm, setShowAppForm] = useState(false);
+  const [appName, setAppName] = useState("");
+  const [appId, setAppId] = useState("");
+  const [appSlug, setAppSlug] = useState("");
+  const [appPrivateKeyFile, setAppPrivateKeyFile] = useState(null);
+  const [appWebhookSecret, setAppWebhookSecret] = useState("");
+  const [savingGithubApp, setSavingGithubApp] = useState(false);
 
   const loadUser = useCallback(async () => {
     try {
@@ -98,15 +98,12 @@ function Integrations() {
     }
   }, []);
 
-  const loadGhAppConfig = useCallback(async () => {
+  const loadGithubApps = useCallback(async () => {
     try {
-      const cfg = await getGitHubAppConfig();
-      setGhAppId(cfg.app_id || "");
-      setGhAppSlug(cfg.slug || "");
-      setGhPrivateKeyConfigured(cfg.private_key_configured || false);
-      setGhWebhookSecretConfigured(cfg.webhook_secret_configured || false);
+      const configs = await getGitHubAppConfigs();
+      setGithubApps(configs);
     } catch (error) {
-      // Non-critical — may not be admin
+      addLog("error", "Failed to load GitHub Apps: " + error.message);
     }
   }, []);
 
@@ -114,17 +111,19 @@ function Integrations() {
     loadUser();
     loadGlobalPrConfig();
     loadSlackConfig();
-    loadGhAppConfig();
+    loadGithubApps();
 
     if (initialInstallationId) {
       // GitHub redirected back after App installation — strip the URL param and auto-sync
       setSearchParams({}, { replace: true });
       addLog("info", `GitHub App installation detected (ID: ${initialInstallationId}). Syncing...`);
       setLoading(true);
-      syncGitHubAppInstallations()
+      getGitHubAppConfigs()
+        .then(configs => Promise.all(configs.map(config => syncGitHubAppInstallations(config.id))))
         .then(result => {
-          if (result.count > 0) {
-            addLog("info", `Synced ${result.count} installation(s): ${result.synced.join(", ")}`);
+          const count = result.reduce((total, item) => total + item.count, 0);
+          if (count > 0) {
+            addLog("info", `Synced ${count} installation(s) across configured GitHub Apps.`);
           } else {
             addLog("warn", "Sync returned no installations. The App may not be fully installed yet.");
           }
@@ -137,15 +136,17 @@ function Integrations() {
       loadIntegrations();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadUser, loadIntegrations, loadGlobalPrConfig, loadSlackConfig, loadGhAppConfig, setSearchParams]);
+  }, [loadUser, loadIntegrations, loadGlobalPrConfig, loadSlackConfig, loadGithubApps, setSearchParams]);
 
   const handleRefresh = async () => {
     try {
       setLoading(true);
-      addLog("info", "Syncing installations from GitHub App API...");
-      const result = await syncGitHubAppInstallations();
-      if (result.count > 0) {
-        addLog("info", `Synced ${result.count} installation(s): ${result.synced.join(", ")}`);
+      addLog("info", "Syncing installations from all configured GitHub Apps...");
+      const configs = await getGitHubAppConfigs();
+      const results = await Promise.all(configs.map(config => syncGitHubAppInstallations(config.id)));
+      const count = results.reduce((total, result) => total + result.count, 0);
+      if (count > 0) {
+        addLog("info", `Synced ${count} installation(s) across configured GitHub Apps.`);
       } else {
         addLog("info", "No installations found on GitHub. Make sure the App is installed on your account or org.");
       }
@@ -157,11 +158,11 @@ function Integrations() {
     }
   };
 
-  const handleInstallApp = async (targetType = "") => {
+  const handleInstallApp = async (targetType = "", appConfigId = null) => {
     try {
       setLoading(true);
       addLog("info", "Fetching GitHub App install URL...");
-      const { install_url } = await getGitHubAppInstallUrl(targetType);
+      const { install_url } = await getGitHubAppInstallUrl(targetType, appConfigId);
       addLog("info", "Opening GitHub App installation page in a new tab...");
       addLog(
         "info",
@@ -406,27 +407,33 @@ function Integrations() {
     }
   };
 
-  const handleSaveGhApp = async () => {
+  const resetAppForm = () => {
+    setAppName("");
+    setAppId("");
+    setAppSlug("");
+    setAppPrivateKeyFile(null);
+    setAppWebhookSecret("");
+  };
+
+  const handleCreateGithubApp = async () => {
     if (!isAdmin) return;
-    setSavingGhApp(true);
+    setSavingGithubApp(true);
     try {
       const formData = new FormData();
-      if (ghAppId.trim()) formData.append("app_id", ghAppId.trim());
-      if (ghAppSlug.trim()) formData.append("slug", ghAppSlug.trim());
-      if (ghWebhookSecret.trim()) formData.append("webhook_secret", ghWebhookSecret.trim());
-      if (ghPrivateKeyFile) formData.append("private_key_file", ghPrivateKeyFile);
-
-      const result = await saveGitHubAppConfig(formData);
-      setGhPrivateKeyConfigured(result.private_key_configured || false);
-      setGhWebhookSecretConfigured(result.webhook_secret_configured || false);
-      // Clear sensitive inputs after save
-      setGhWebhookSecret("");
-      setGhPrivateKeyFile(null);
-      addLog("success", "GitHub App credentials saved successfully");
+      formData.append("name", appName.trim());
+      formData.append("app_id", appId.trim());
+      formData.append("slug", appSlug.trim());
+      formData.append("webhook_secret", appWebhookSecret.trim());
+      if (appPrivateKeyFile) formData.append("private_key_file", appPrivateKeyFile);
+      const createdApp = await createGitHubAppConfig(formData);
+      setGithubApps(existingApps => [...existingApps, createdApp]);
+      resetAppForm();
+      setShowAppForm(false);
+      addLog("success", "GitHub App saved. You can now install it.");
     } catch (error) {
-      addLog("error", "Failed to save GitHub App credentials: " + error.message);
+      addLog("error", "Failed to save GitHub App: " + error.message);
     } finally {
-      setSavingGhApp(false);
+      setSavingGithubApp(false);
     }
   };
 
@@ -485,24 +492,9 @@ function Integrations() {
         <h2>GitHub Integrations</h2>
         <div style={{ display: "flex", gap: "8px" }}>
           {isAdmin && (
-            <>
-              <button
-                className="btn-primary github-connect-btn"
-                onClick={() => handleInstallApp("Organization")}
-                disabled={loading || !ghAppSlug}
-                title={!ghAppSlug ? "Save GitHub App credentials (App Slug) first" : "Install on an organization account"}
-              >
-                {loading ? "Loading..." : "🏢 Add Org"}
-              </button>
-              <button
-                className="btn-secondary-small"
-                onClick={() => handleInstallApp("")}
-                disabled={loading || !ghAppSlug}
-                title={!ghAppSlug ? "Save GitHub App credentials (App Slug) first" : "Install on your personal account"}
-              >
-                👤 Add Personal
-              </button>
-            </>
+            <button className="btn-primary github-connect-btn" onClick={() => setShowAppForm(true)}>
+              + Add GitHub App
+            </button>
           )}
           <button
             className="btn-secondary-small"
@@ -515,48 +507,13 @@ function Integrations() {
         </div>
       </div>
 
-      {isAdmin && integrations.length === 0 && !loading && (
+      {isAdmin && integrations.length === 0 && githubApps.length === 0 && !loading && (
         <div className="card" style={{ marginBottom: "20px", textAlign: "center", padding: "40px" }}>
           <div style={{ fontSize: "3rem", marginBottom: "20px" }}>📦</div>
-          {ghAppSlug ? (
-            <>
-              <h3>Install the VulnMonk GitHub App</h3>
-              <p style={{ color: "#64748b", marginBottom: "8px" }}>
-                Install the GitHub App on your personal account or organization. GitHub will
-                automatically notify VulnMonk — no webhook or token setup needed.
-              </p>
-              <p style={{ color: "#64748b", marginBottom: "24px", fontSize: "0.9rem" }}>
-                After installing, click <strong>↻ Refresh</strong> to see your installation here.
-                You can install on <strong>multiple organizations</strong> — just repeat for each one.
-              </p>
-              <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
-                <button
-                  className="btn-primary"
-                  onClick={() => handleInstallApp("Organization")}
-                  disabled={loading}
-                  style={{ fontSize: "1.125rem", padding: "12px 32px" }}
-                >
-                  🏢 Install on an Organization
-                </button>
-                <button
-                  className="btn-secondary-small"
-                  onClick={() => handleInstallApp("")}
-                  disabled={loading}
-                  style={{ fontSize: "1rem", padding: "12px 24px" }}
-                >
-                  👤 Install on Personal Account
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <h3>Configure GitHub App Credentials First</h3>
-              <p style={{ color: "#64748b", marginBottom: "8px" }}>
-                Fill in your <strong>GitHub App Credentials</strong> below (App ID, Slug, Private Key, Webhook Secret)
-                then come back here to install the App on your account or organisation.
-              </p>
-            </>
-          )}
+          <h3>Add a GitHub App</h3>
+          <p style={{ color: "#64748b", marginBottom: "8px" }}>
+            Add each GitHub App with its own ID, slug, private key, and webhook secret. Install controls appear on each saved app.
+          </p>
           <p style={{ fontSize: "0.8rem", color: "#94a3b8", marginTop: "16px" }}>
             Requires a GitHub App to be registered and credentials saved below.
           </p>
@@ -845,115 +802,58 @@ function Integrations() {
         </div>
       </div>
 
-      {/* GitHub App Credentials Card */}
+      {/* GitHub App Manager */}
       {isAdmin && (
         <div className="card" style={{ marginTop: "24px", padding: "20px 24px" }}>
-          <h3 style={{ margin: "0 0 4px", fontSize: "1rem", fontWeight: 700 }}>🔑 GitHub App Credentials</h3>
+          <h3 style={{ margin: "0 0 4px", fontSize: "1rem", fontWeight: 700 }}>🔑 GitHub Apps</h3>
           <p style={{ margin: "0 0 16px", fontSize: "0.85rem", color: "#6b7280" }}>
-            Configure your GitHub App credentials here instead of (or in addition to) environment variables.
-            Sensitive values are <strong>never displayed</strong> once saved — only whether they are configured.
-            The private key must be the <code>.pem</code> file downloaded from GitHub.
+            Each configuration is stored in VulnMonk. Install and sync each app independently; credentials are never displayed after saving.
           </p>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
-            <div>
-              <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>
-                App ID
-              </label>
-              <input
-                type="text"
-                value={ghAppId}
-                onChange={e => setGhAppId(e.target.value)}
-                placeholder="e.g. 123456"
-                style={{
-                  width: "100%", padding: "8px 12px", border: "2px solid #e5e7eb",
-                  borderRadius: "6px", fontSize: "0.9rem", boxSizing: "border-box"
-                }}
-              />
+          {githubApps.map(app => (
+            <div key={app.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", padding: "12px 14px", marginBottom: "10px", border: "1px solid #dbe3ef", borderRadius: "6px", background: "#f8fafc" }}>
+              <div>
+                <div style={{ fontWeight: 700, color: "#1e293b" }}>{app.name || app.slug}</div>
+                <div style={{ marginTop: "3px", fontSize: "0.8rem", color: "#64748b" }}>App ID: {app.app_id} · Slug: {app.slug} · {app.private_key_configured ? "Key configured" : "Key missing"} · {app.webhook_secret_configured ? "Webhook secret configured" : "Webhook secret not set"}</div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button className="btn-primary" disabled={loading} onClick={() => handleInstallApp("Organization", app.id)}>🏢 Install Org</button>
+                <button className="btn-secondary-small" disabled={loading} onClick={() => handleInstallApp("", app.id)}>👤 Install Personal</button>
+                <button className="btn-secondary-small" disabled={loading} onClick={() => syncGitHubAppInstallations(app.id).then(loadIntegrations).catch(error => addLog("error", "Sync failed: " + error.message))}>↻ Sync</button>
+              </div>
             </div>
-            <div>
-              <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>
-                App Slug
-              </label>
-              <input
-                type="text"
-                value={ghAppSlug}
-                onChange={e => setGhAppSlug(e.target.value)}
-                placeholder="e.g. vulnmonk"
-                style={{
-                  width: "100%", padding: "8px 12px", border: "2px solid #e5e7eb",
-                  borderRadius: "6px", fontSize: "0.9rem", boxSizing: "border-box"
-                }}
-              />
+          ))}
+          {githubApps.length === 0 && <p className="no-data">No GitHub App configurations saved yet.</p>}
+          {!showAppForm ? (
+            <button className="btn-secondary-small" onClick={() => setShowAppForm(true)}>+ Add GitHub App</button>
+          ) : (
+            <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid #e5e7eb" }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: "0.9rem" }}>Add GitHub App</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <div>
+                  <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>App Name</label>
+                  <input type="text" value={appName} onChange={e => setAppName(e.target.value)} placeholder="e.g. Acme Security App" style={{ width: "100%", padding: "8px 12px", border: "2px solid #e5e7eb", borderRadius: "6px", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>App ID</label>
+                  <input type="text" value={appId} onChange={e => setAppId(e.target.value)} placeholder="e.g. 123456" style={{ width: "100%", padding: "8px 12px", border: "2px solid #e5e7eb", borderRadius: "6px", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>App Slug</label>
+                  <input type="text" value={appSlug} onChange={e => setAppSlug(e.target.value)} placeholder="e.g. acme-vulnmonk" style={{ width: "100%", padding: "8px 12px", border: "2px solid #e5e7eb", borderRadius: "6px", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>Webhook Secret</label>
+                  <input type="password" value={appWebhookSecret} onChange={e => setAppWebhookSecret(e.target.value)} style={{ width: "100%", padding: "8px 12px", border: "2px solid #e5e7eb", borderRadius: "6px", boxSizing: "border-box" }} />
+                </div>
+              </div>
+              <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>Private Key (.pem file)</label>
+              <input type="file" accept=".pem,.key,text/plain" onChange={e => setAppPrivateKeyFile(e.target.files[0] || null)} />
+              <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+                <button className="btn-primary" onClick={handleCreateGithubApp} disabled={savingGithubApp || !appId.trim() || !appSlug.trim() || !appPrivateKeyFile}>{savingGithubApp ? "Saving..." : "Save GitHub App"}</button>
+                <button className="btn-secondary-small" onClick={() => { resetAppForm(); setShowAppForm(false); }}>Cancel</button>
+              </div>
             </div>
-          </div>
-
-          <div style={{ marginBottom: "16px" }}>
-            <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>
-              Private Key (.pem file)
-              {ghPrivateKeyConfigured && (
-                <span style={{
-                  marginLeft: "10px", fontSize: "0.78rem", padding: "2px 8px",
-                  background: "#dcfce7", color: "#15803d", borderRadius: "4px", fontWeight: 600
-                }}>
-                  ✓ Key configured
-                </span>
-              )}
-            </label>
-            <input
-              type="file"
-              accept=".pem,.key,text/plain"
-              onChange={e => setGhPrivateKeyFile(e.target.files[0] || null)}
-              style={{ display: "block", fontSize: "0.9rem", color: "#374151" }}
-            />
-            {ghPrivateKeyFile && (
-              <p style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: "4px" }}>
-                Selected: {ghPrivateKeyFile.name}
-              </p>
-            )}
-            {ghPrivateKeyConfigured && !ghPrivateKeyFile && (
-              <p style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: "4px" }}>
-                Upload a new file only if you want to replace the existing key.
-              </p>
-            )}
-          </div>
-
-          <div style={{ marginBottom: "20px" }}>
-            <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>
-              Webhook Secret
-              {ghWebhookSecretConfigured && (
-                <span style={{
-                  marginLeft: "10px", fontSize: "0.78rem", padding: "2px 8px",
-                  background: "#dcfce7", color: "#15803d", borderRadius: "4px", fontWeight: 600
-                }}>
-                  ✓ Secret configured
-                </span>
-              )}
-            </label>
-            <input
-              type="password"
-              value={ghWebhookSecret}
-              onChange={e => setGhWebhookSecret(e.target.value)}
-              placeholder={ghWebhookSecretConfigured ? "Enter new secret to replace existing" : "Webhook secret from GitHub App settings"}
-              style={{
-                width: "100%", padding: "8px 12px", border: "2px solid #e5e7eb",
-                borderRadius: "6px", fontSize: "0.9rem", boxSizing: "border-box"
-              }}
-            />
-          </div>
-
-          <button
-            onClick={handleSaveGhApp}
-            disabled={savingGhApp || (!ghAppId.trim() && !ghAppSlug.trim() && !ghPrivateKeyFile && !ghWebhookSecret.trim())}
-            style={{
-              padding: "9px 22px", background: "#2563eb", color: "white",
-              border: "none", borderRadius: "6px",
-              cursor: (savingGhApp || (!ghAppId.trim() && !ghAppSlug.trim() && !ghPrivateKeyFile && !ghWebhookSecret.trim())) ? "not-allowed" : "pointer",
-              fontWeight: 600, fontSize: "0.9rem", opacity: (!ghAppId.trim() && !ghAppSlug.trim() && !ghPrivateKeyFile && !ghWebhookSecret.trim()) ? 0.5 : 1
-            }}
-          >
-            {savingGhApp ? "Saving…" : "Save Credentials"}
-          </button>
+          )}
         </div>
       )}
 

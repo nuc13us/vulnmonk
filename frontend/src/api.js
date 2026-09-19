@@ -326,8 +326,11 @@ export async function getAllGlobalConfigs() {
 
 // ==================== GITHUB INTEGRATION ENDPOINTS ====================
 
-export async function getGitHubAppInstallUrl(targetType = "") {
-  const qs = targetType ? `?target_type=${encodeURIComponent(targetType)}` : "";
+export async function getGitHubAppInstallUrl(targetType = "", appConfigId = null) {
+  const params = new URLSearchParams();
+  if (targetType) params.set("target_type", targetType);
+  if (appConfigId) params.set("app_config_id", appConfigId);
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const res = await apiFetch(`${API_BASE}/integrations/github/app-install-url${qs}`, {
     headers: getHeaders()
   });
@@ -409,8 +412,9 @@ export async function importGitHubProjects(integrationId, repoUrls) {
   return res.json();
 }
 
-export async function syncGitHubAppInstallations() {
-  const res = await apiFetch(`${API_BASE}/integrations/github/app/sync`, {
+export async function syncGitHubAppInstallations(appConfigId = null) {
+  const qs = appConfigId ? `?app_config_id=${encodeURIComponent(appConfigId)}` : "";
+  const res = await apiFetch(`${API_BASE}/integrations/github/app/sync${qs}`, {
     method: "POST",
     headers: getHeaders()
   });
@@ -633,6 +637,28 @@ export async function saveGitHubAppConfig(formData) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Failed to save GitHub App config");
+  }
+  return res.json();
+}
+
+export async function getGitHubAppConfigs() {
+  const res = await apiFetch(`${API_BASE}/integrations/github-app/configs`, {
+    headers: getHeaders()
+  });
+  if (!res.ok) throw new Error("Failed to load GitHub App configurations");
+  return res.json();
+}
+
+export async function createGitHubAppConfig(formData) {
+  const token = getAuthToken();
+  const res = await apiFetch(`${API_BASE}/integrations/github-app/configs`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to create GitHub App configuration");
   }
   return res.json();
 }

@@ -61,6 +61,19 @@ class GlobalConfiguration(Base):
     value = Column(String, default="")  # Store string/JSON data
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+class GitHubAppConfig(Base):
+    __tablename__ = 'github_app_configs'
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=True, default="")
+    app_id = Column(String, nullable=False, default="")
+    slug = Column(String, nullable=False, default="")
+    private_key_pem = Column(String, nullable=False, default="")
+    webhook_secret = Column(String, nullable=True, default="")
+    is_active = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    integrations = relationship("GitHubIntegration", back_populates="app_config")
+
 class GitHubIntegration(Base):
     __tablename__ = 'github_integrations'
     id = Column(Integer, primary_key=True, index=True)
@@ -68,6 +81,8 @@ class GitHubIntegration(Base):
     # GitHub App installs: installation_id is set; access_token is left empty.
     # Legacy OAuth integrations: access_token is set; installation_id is None.
     installation_id = Column(Integer, nullable=True, unique=True, index=True)
+    app_config_id = Column(Integer, ForeignKey('github_app_configs.id'), nullable=True, index=True)
+    app_config = relationship("GitHubAppConfig", back_populates="integrations")
     account_type = Column(String, default="User")  # "User" or "Organization"
     access_token = Column(String, nullable=True, default="")  # Legacy OAuth token
     organizations = Column(JSON, default=list)  # Legacy OAuth org list

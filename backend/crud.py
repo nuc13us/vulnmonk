@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from . import models, schemas
 from datetime import datetime
+import os
 
 def get_project(db: Session, project_id: int):
     return db.query(models.Project).filter(models.Project.id == project_id).first()
@@ -193,12 +194,62 @@ def get_github_integrations(db: Session, skip: int = 0, limit: int = 100):
     """Get all GitHub integrations"""
     return db.query(models.GitHubIntegration).offset(skip).limit(limit).all()
 
+
+def get_github_app_config_by_id(db: Session, app_config_id: int | None):
+    if app_config_id is None:
+        return None
+    return db.query(models.GitHubAppConfig).filter(
+        models.GitHubAppConfig.id == app_config_id
+    ).first()
+
+
+def get_github_app_configs(db: Session, skip: int = 0, limit: int = 100):
+    return db.query(models.GitHubAppConfig).order_by(models.GitHubAppConfig.id.asc()).offset(skip).limit(limit).all()
+
+
+def get_active_github_app_config(db: Session):
+    return db.query(models.GitHubAppConfig).filter(
+        models.GitHubAppConfig.is_active == 1
+    ).order_by(models.GitHubAppConfig.id.asc()).first()
+
+
+def get_github_app_config_for_integration(db: Session, integration: models.GitHubIntegration | None):
+    if integration and integration.app_config_id:
+        config = get_github_app_config_by_id(db, integration.app_config_id)
+        if config and config.app_id and config.private_key_pem:
+            return {
+                "app_id": config.app_id,
+                "slug": config.slug,
+                "private_key": config.private_key_pem,
+                "webhook_secret": config.webhook_secret,
+            }
+    active = get_active_github_app_config(db)
+    if active and active.app_id and active.private_key_pem:
+        return {
+            "app_id": active.app_id,
+            "slug": active.slug,
+            "private_key": active.private_key_pem,
+            "webhook_secret": active.webhook_secret,
+        }
+    return {}
+
+
+def get_github_app_config_for_installation(db: Session, installation_id: int | None):
+    if installation_id is None:
+        return {}
+    integration = get_github_integration_by_installation_id(db, installation_id)
+    if integration:
+        return get_github_app_config_for_integration(db, integration)
+    return {}
+
+
 def create_github_integration(db: Session, integration: schemas.GitHubIntegrationCreate):
     """Create a new GitHub integration"""
     db_integration = models.GitHubIntegration(
         org_name=integration.org_name,
         access_token=integration.access_token or "",
         installation_id=integration.installation_id,
+        app_config_id=integration.app_config_id,
         account_type=integration.account_type or "User",
     )
     db.add(db_integration)
@@ -207,11 +258,83 @@ def create_github_integration(db: Session, integration: schemas.GitHubIntegratio
     return db_integration
 
 
+def create_github_app_config(
+    db: Session,
+    app_id: str,
+    slug: str,
+    private_key_pem: str,
+    webhook_secret: str = "",
+    name: str = "",
+    is_active: bool = True,
+):
+    db_config = models.GitHubAppConfig(
+        name=name.strip() if name else "",
+        app_id=(app_id or "").strip(),
+        slug=(slug or "").strip(),
+        private_key_pem=(private_key_pem or "").strip(),
+        webhook_secret=(webhook_secret or "").strip(),
+        is_active=1 if is_active else 0,
+    )
+    db.add(db_config)
+    db.commit()
+    db.refresh(db_config)
+    return db_config
+
+
+def update_github_app_config(
+    db: Session,
+    app_config_id: int,
+    *,
+    name: str | None = None,
+    app_id: str | None = None,
+    slug: str | None = None,
+    private_key_pem: str | None = None,
+    webhook_secret: str | None = None,
+    is_active: bool | None = None,
+):
+    config = get_github_app_config_by_id(db, app_config_id)
+    if not config:
+        return None
+    if name is not None:
+        config.name = name.strip() if name else ""
+    if app_id is not None:
+        config.app_id = app_id.strip()
+    if slug is not None:
+        config.slug = slug.strip()
+    if private_key_pem is not None:
+        config.private_key_pem = private_key_pem.strip()
+    if webhook_secret is not None:
+        config.webhook_secret = webhook_secret.strip()
+    if is_active is not None:
+        config.is_active = 1 if is_active else 0
+    config.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(config)
+    return config
+
+
+def delete_github_app_config(db: Session, app_config_id: int):
+    config = get_github_app_config_by_id(db, app_config_id)
+    if not config:
+        return False
+    db.delete(config)
+    db.commit()
+    return True
+
+
 def get_github_integration_by_installation_id(db: Session, installation_id: int):
     """Get a GitHub integration by GitHub App installation_id."""
     return db.query(models.GitHubIntegration).filter(
         models.GitHubIntegration.installation_id == installation_id
     ).first()
+
+
+def get_github_integration_for_repo_owner(db: Session, owner: str):
+    integrations = get_github_integrations(db)
+    return next(
+        (i for i in integrations if owner in (i.org_name, f"{owner} (Personal)")),
+        None,
+    )
 
 
 # ==================== TRUFFLEHOG CRUD ====================
@@ -292,6 +415,7 @@ def create_or_update_app_installation(
     installation_id: int,
     account_login: str,
     account_type: str,
+    app_config_id: int | None = None,
 ) -> models.GitHubIntegration:
     """
     Upsert a GitHubIntegration row when a GitHub App installation is
@@ -301,6 +425,8 @@ def create_or_update_app_installation(
     if existing:
         existing.org_name = account_login
         existing.account_type = account_type
+        if app_config_id is not None:
+            existing.app_config_id = app_config_id
         db.commit()
         db.refresh(existing)
         return existing
@@ -308,6 +434,7 @@ def create_or_update_app_installation(
     row = models.GitHubIntegration(
         org_name=account_login,
         installation_id=installation_id,
+        app_config_id=app_config_id,
         account_type=account_type,
         access_token="",  # not needed for App-based auth
     )
@@ -488,8 +615,13 @@ def update_pr_scan(db: Session, pr_scan_id: int, status: str,
     return record
 
 
-def get_pr_scans(db: Session, project_id: int, limit: int = 200):
+def get_pr_scans(db: Session, project_id: int, limit: int | None = None):
     """List PR scans for a project, newest first."""
+    if limit is None:
+        try:
+            limit = int(os.getenv("PR_SCAN_HISTORY_LIMIT", "200"))
+        except ValueError:
+            limit = 200
     return db.query(models.PRScanResult).filter(
         models.PRScanResult.project_id == project_id
     ).order_by(models.PRScanResult.created_at.desc()).limit(limit).all()

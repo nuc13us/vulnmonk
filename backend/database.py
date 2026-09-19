@@ -43,6 +43,17 @@ def _run_migrations():
         except Exception:
             pass
 
+        # github_integrations.app_config_id — tracks which GitHub App credentials belong to this installation
+        try:
+            conn.execute(
+                __import__("sqlalchemy").text(
+                    "ALTER TABLE github_integrations ADD COLUMN app_config_id INTEGER"
+                )
+            )
+            conn.commit()
+        except Exception:
+            pass
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     _run_migrations()

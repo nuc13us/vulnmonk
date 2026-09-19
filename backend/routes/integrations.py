@@ -15,43 +15,49 @@ router = APIRouter()
 @router.get("/integrations/github/app-install-url")
 def get_github_app_install_url(
     target_type: str = "",
-    current_user: models.User = Depends(auth.get_current_active_admin)
+    app_config_id: Optional[int] = None,
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db),
 ):
-    """Return the URL to install the GitHub App on an org or personal account.
-
-    Optional query param `target_type=Organization` restricts the GitHub
-    account picker to org accounts only, which avoids landing on an
-    already-installed personal account.
-    """
-    if not github_app.get_slug():
+    """Return the URL to install the GitHub App on an org or personal account."""
+    config = crud.get_github_app_config_by_id(db, app_config_id) if app_config_id else crud.get_active_github_app_config(db)
+    if not config or not config.slug:
         raise HTTPException(
             status_code=400,
-            detail="GITHUB_APP_SLUG is not configured. Save your GitHub App credentials first (App Slug field).",
+            detail="GitHub App slug is not configured. Save your GitHub App credentials on the Integrations page first.",
         )
-    return {"install_url": github_app.get_install_url(target_type=target_type)}
+    return {"install_url": github_app.get_install_url(
+        target_type=target_type,
+        app_config={
+            "app_id": config.app_id,
+            "slug": config.slug,
+            "private_key": config.private_key_pem,
+            "webhook_secret": config.webhook_secret,
+        },
+    )}
 
 
 @router.post("/integrations/github/app/sync")
 def sync_github_app_installations(
+    app_config_id: Optional[int] = None,
     current_user: models.User = Depends(auth.get_current_active_admin),
     db: Session = Depends(get_db),
 ):
-    """Pull all current App installations from GitHub and upsert into DB.
-
-    Useful when the installation webhook was not received (e.g. ngrok was
-    not running at install time).  Requires GITHUB_APP_ID and
-    GITHUB_APP_PRIVATE_KEY to be configured.
-    """
-    if not github_app.is_configured():
+    """Pull all current App installations from GitHub and upsert into DB."""
+    config = crud.get_github_app_config_by_id(db, app_config_id) if app_config_id else crud.get_active_github_app_config(db)
+    if not config or not config.app_id or not config.private_key_pem:
         raise HTTPException(
             status_code=500,
-            detail=(
-                "GitHub App credentials not configured. "
-                "Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY in your .env file."
-            ),
+            detail="GitHub App credentials are not configured. Save them on the Integrations page first.",
         )
     try:
-        app_jwt = github_app.get_app_jwt()
+        app_cfg = {
+            "app_id": config.app_id,
+            "slug": config.slug,
+            "private_key": github_app._parse_pem(config.private_key_pem),
+            "webhook_secret": config.webhook_secret,
+        }
+        app_jwt = github_app.get_app_jwt(app_id=app_cfg["app_id"], private_key=app_cfg["private_key"])
         resp = requests.get(
             "https://api.github.com/app/installations",
             headers={
@@ -71,6 +77,7 @@ def sync_github_app_installations(
             installation_id=inst["id"],
             account_login=inst["account"]["login"],
             account_type=inst["account"]["type"],
+            app_config_id=config.id,
         )
         synced.append(row.org_name)
 
@@ -128,7 +135,19 @@ def get_github_repositories(
     try:
         # ── Resolve auth token ────────────────────────────────────────────
         if integration.installation_id:
-            token = github_app.get_installation_token(integration.installation_id)
+            app_config = crud.get_github_app_config_for_integration(db, integration)
+            if not app_config:
+                raise HTTPException(
+                    status_code=400,
+                    detail="The GitHub App credentials for this installation are not configured.",
+                )
+            token = github_app.get_installation_token(
+                integration.installation_id,
+                app_config={
+                    **app_config,
+                    "private_key": github_app._parse_pem(app_config["private_key"]),
+                },
+            )
         elif integration.access_token:
             token = integration.access_token
         else:
@@ -285,8 +304,79 @@ def get_github_app_config(
     current_user: models.User = Depends(auth.get_current_active_admin),
     db: Session = Depends(get_db),
 ):
-    """Return masked GitHub App config (sensitive values are never returned)."""
-    return crud.get_github_app_config(db)
+    """Return the current active GitHub App config."""
+    config = crud.get_active_github_app_config(db)
+    if not config:
+        return {"app_id": "", "slug": "", "private_key_configured": False, "webhook_secret_configured": False}
+    return {
+        "app_id": config.app_id,
+        "slug": config.slug,
+        "private_key_configured": bool(config.private_key_pem),
+        "webhook_secret_configured": bool(config.webhook_secret),
+    }
+
+
+@router.get("/integrations/github-app/configs")
+def list_github_app_configs(
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db),
+):
+    return [{
+        "id": cfg.id,
+        "name": cfg.name,
+        "app_id": cfg.app_id,
+        "slug": cfg.slug,
+        "private_key_configured": bool(cfg.private_key_pem),
+        "webhook_secret_configured": bool(cfg.webhook_secret),
+        "is_active": bool(cfg.is_active),
+    } for cfg in crud.get_github_app_configs(db)]
+
+
+@router.post("/integrations/github-app/configs")
+async def create_github_app_config(
+    name: Optional[str] = Form(None),
+    app_id: Optional[str] = Form(None),
+    slug: Optional[str] = Form(None),
+    webhook_secret: Optional[str] = Form(None),
+    private_key_file: Optional[UploadFile] = File(None),
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db),
+):
+    """Create a GitHub App config from the UI. This is the only supported config source."""
+    if not app_id or not slug:
+        raise HTTPException(status_code=400, detail="app_id and slug are required")
+    if not private_key_file or not private_key_file.filename:
+        raise HTTPException(status_code=400, detail="Private key file is required")
+    content = await private_key_file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded private key file is empty.")
+    private_key_pem = content.decode("utf-8").strip()
+    if "-----BEGIN" not in private_key_pem:
+        raise HTTPException(status_code=400, detail="Uploaded file does not appear to be a valid PEM private key.")
+    cfg = crud.create_github_app_config(
+        db,
+        app_id=app_id,
+        slug=slug,
+        private_key_pem=private_key_pem,
+        webhook_secret=(webhook_secret or "").strip(),
+        name=(name or "").strip(),
+        is_active=True,
+    )
+    github_app.reload_config(
+        app_id=cfg.app_id,
+        slug=cfg.slug,
+        private_key_pem=cfg.private_key_pem,
+        webhook_secret=cfg.webhook_secret,
+    )
+    return {
+        "id": cfg.id,
+        "name": cfg.name,
+        "app_id": cfg.app_id,
+        "slug": cfg.slug,
+        "private_key_configured": bool(cfg.private_key_pem),
+        "webhook_secret_configured": bool(cfg.webhook_secret),
+        "is_active": bool(cfg.is_active),
+    }
 
 
 @router.post("/integrations/github-app/config")
@@ -298,45 +388,51 @@ async def save_github_app_config(
     current_user: models.User = Depends(auth.get_current_active_admin),
     db: Session = Depends(get_db),
 ):
-    """Save GitHub App credentials (Admin only).  Private key is uploaded as a .pem file.
-    
-    Only fields that are provided (non-empty) will be updated.
-    Sensitive values (private key, webhook secret) are stored but never returned.
-    """
+    """Backwards-compatible single-config save endpoint. Stores the active UI config."""
     private_key_pem: Optional[str] = None
-
     if private_key_file and private_key_file.filename:
         content = await private_key_file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Uploaded private key file is empty.")
         private_key_pem = content.decode("utf-8").strip()
-        # Basic validation: must look like a PEM key
         if "-----BEGIN" not in private_key_pem:
-            raise HTTPException(
-                status_code=400,
-                detail="Uploaded file does not appear to be a valid PEM private key.",
-            )
-
-    # Treat empty-string form fields as "no change"
+            raise HTTPException(status_code=400, detail="Uploaded file does not appear to be a valid PEM private key.")
     app_id_val = (app_id or "").strip() or None
     slug_val = (slug or "").strip() or None
     secret_val = (webhook_secret or "").strip() or None
 
-    result = crud.save_github_app_config(
-        db,
-        app_id=app_id_val,
-        slug=slug_val,
-        private_key_pem=private_key_pem,
-        webhook_secret=secret_val,
-    )
+    existing = crud.get_active_github_app_config(db)
+    if existing:
+        result = crud.update_github_app_config(
+            db, existing.id,
+            app_id=app_id_val,
+            slug=slug_val,
+            private_key_pem=private_key_pem,
+            webhook_secret=secret_val,
+            is_active=True,
+        )
+    else:
+        if not app_id_val or not slug_val or not private_key_pem:
+            raise HTTPException(status_code=400, detail="app_id, slug, and private key are required to configure the GitHub App")
+        result = crud.create_github_app_config(
+            db,
+            app_id=app_id_val,
+            slug=slug_val,
+            private_key_pem=private_key_pem,
+            webhook_secret=secret_val or "",
+            name="Primary app",
+            is_active=True,
+        )
 
-    # Reload the runtime github_app module so it uses the newly saved credentials
-    raw = crud.get_github_app_config_raw(db)
     github_app.reload_config(
-        app_id=raw["app_id"],
-        slug=raw["slug"],
-        private_key_pem=raw["private_key_pem"],
-        webhook_secret=raw["webhook_secret"],
+        app_id=result.app_id,
+        slug=result.slug,
+        private_key_pem=result.private_key_pem,
+        webhook_secret=result.webhook_secret,
     )
-
-    return result
+    return {
+        "app_id": result.app_id,
+        "slug": result.slug,
+        "private_key_configured": bool(result.private_key_pem),
+        "webhook_secret_configured": bool(result.webhook_secret),
+    }

@@ -30,6 +30,34 @@ scanning_projects: set[int] = set()
 trufflehog_scanning_projects: set[int] = set()
 
 
+def _apply_project_github_auth(db: Session, project: models.Project, clone_url: str) -> str:
+    """Apply the correct GitHub auth token for a project's configured installation."""
+    if not project.integration_id:
+        return clone_url
+
+    integration = crud.get_github_integration(db, project.integration_id)
+    if not integration:
+        return clone_url
+
+    token = None
+    if integration.installation_id:
+        app_cfg = crud.get_github_app_config_for_integration(db, integration)
+        if app_cfg and app_cfg.get("app_id") and app_cfg.get("private_key"):
+            try:
+                token = github_app.get_installation_token(integration.installation_id, app_config=app_cfg)
+            except Exception:
+                token = None
+    elif integration.access_token:
+        token = integration.access_token
+
+    if token and clone_url.startswith("https://github.com/"):
+        return clone_url.replace(
+            "https://github.com/",
+            f"https://x-access-token:{token}@github.com/",
+        )
+    return clone_url
+
+
 # ==================== HELPERS ====================
 
 def validate_yaml_content(yaml_content: str) -> bool:
@@ -421,21 +449,7 @@ def trigger_scan(
     temp_path = os.path.join(PROJECTS_ROOT, f"temp-{repo_name}-{unique_id}")
 
     try:
-        clone_url = project.github_url
-
-        if project.integration_id:
-            integration = crud.get_github_integration(db, project.integration_id)
-            if integration:
-                token = None
-                if integration.installation_id:
-                    token = github_app.get_installation_token(integration.installation_id)
-                elif integration.access_token:
-                    token = integration.access_token
-                if token and clone_url.startswith("https://github.com/"):
-                    clone_url = clone_url.replace(
-                        "https://github.com/",
-                        f"https://x-access-token:{token}@github.com/"
-                    )
+        clone_url = _apply_project_github_auth(db, project, project.github_url)
 
         subprocess.run(
             ["git", "clone", "--depth", "1", clone_url, temp_path],
@@ -966,21 +980,7 @@ def trigger_trufflehog_scan(
     temp_path = os.path.join(PROJECTS_ROOT, f"temp-th-{repo_name}-{unique_id}")
 
     try:
-        clone_url = project.github_url
-
-        if project.integration_id:
-            integration = crud.get_github_integration(db, project.integration_id)
-            if integration:
-                token = None
-                if integration.installation_id:
-                    token = github_app.get_installation_token(integration.installation_id)
-                elif integration.access_token:
-                    token = integration.access_token
-                if token and clone_url.startswith("https://github.com/"):
-                    clone_url = clone_url.replace(
-                        "https://github.com/",
-                        f"https://x-access-token:{token}@github.com/"
-                    )
+        clone_url = _apply_project_github_auth(db, project, project.github_url)
 
         subprocess.run(
             ["git", "clone", "--depth", "1", clone_url, temp_path],
