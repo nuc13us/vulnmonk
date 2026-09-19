@@ -426,20 +426,22 @@ async def github_webhook(
 
     # ── Verify App webhook signature ───────────────────────────────────────
     sig_header = request.headers.get("X-Hub-Signature-256", "")
-    payload_installation_id = payload.get("installation", {}).get("id") if payload else None
-    webhook_secret = None
-    if payload_installation_id:
-        integration = crud.get_github_integration_by_installation_id(db, payload_installation_id)
-        app_cfg = crud.get_github_app_config_for_integration(db, integration)
-        webhook_secret = app_cfg.get("webhook_secret")
-    if not github_app.verify_webhook_signature(body, sig_header, webhook_secret=webhook_secret):
-        raise HTTPException(status_code=401, detail="Invalid webhook signature")
-
-    # ── Parse payload ──────────────────────────────────────────────────────
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Webhook payload must be a JSON object")
+
+    installation = payload.get("installation") or {}
+    payload_installation_id = installation.get("id") if isinstance(installation, dict) else None
+    webhook_secret = None
+    if payload_installation_id:
+        integration = crud.get_github_integration_by_installation_id(db, payload_installation_id)
+        app_cfg = crud.get_github_app_config_for_integration(db, integration)
+        webhook_secret = app_cfg.get("webhook_secret") if app_cfg else None
+    if not github_app.verify_webhook_signature(body, sig_header, webhook_secret=webhook_secret):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     event_type = request.headers.get("X-GitHub-Event", "")
 
@@ -482,7 +484,8 @@ async def github_webhook(
         return {"status": "ignored", "reason": "Repo not tracked or PR checks disabled"}
 
     # ── Get installation access token ──────────────────────────────────────
-    installation_id = payload.get("installation", {}).get("id")
+    installation = payload.get("installation") or {}
+    installation_id = installation.get("id") if isinstance(installation, dict) else None
     integration = None
     if installation_id:
         integration = crud.get_github_integration_by_installation_id(db, installation_id)
