@@ -379,6 +379,79 @@ async def create_github_app_config(
     }
 
 
+@router.put("/integrations/github-app/configs/{app_config_id}")
+async def update_github_app_config(
+    app_config_id: int,
+    name: Optional[str] = Form(None),
+    app_id: Optional[str] = Form(None),
+    slug: Optional[str] = Form(None),
+    webhook_secret: Optional[str] = Form(None),
+    clear_webhook_secret: Optional[bool] = Form(False),
+    private_key_file: Optional[UploadFile] = File(None),
+    current_user: models.User = Depends(auth.get_current_active_admin),
+    db: Session = Depends(get_db),
+):
+    """Edit an existing GitHub App config (Admin only).
+
+    Fields that are omitted are left unchanged. Secrets follow "blank keeps
+    existing" semantics: an empty ``webhook_secret`` preserves the stored
+    secret unless ``clear_webhook_secret`` is true, and the private key is only
+    replaced when a new PEM file is uploaded.
+    """
+    existing = crud.get_github_app_config_by_id(db, app_config_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="GitHub App configuration not found")
+
+    if app_id is not None and not app_id.strip():
+        raise HTTPException(status_code=400, detail="app_id cannot be empty")
+    if slug is not None and not slug.strip():
+        raise HTTPException(status_code=400, detail="slug cannot be empty")
+
+    private_key_pem: Optional[str] = None
+    if private_key_file and private_key_file.filename:
+        content = await private_key_file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded private key file is empty.")
+        private_key_pem = content.decode("utf-8").strip()
+        if "-----BEGIN" not in private_key_pem:
+            raise HTTPException(status_code=400, detail="Uploaded file does not appear to be a valid PEM private key.")
+
+    if clear_webhook_secret:
+        secret_val: Optional[str] = ""
+    else:
+        secret_val = (webhook_secret or "").strip() or None
+
+    cfg = crud.update_github_app_config(
+        db,
+        app_config_id,
+        name=name,
+        app_id=app_id,
+        slug=slug,
+        private_key_pem=private_key_pem,
+        webhook_secret=secret_val,
+    )
+
+    # Keep the runtime fallback config in sync if this is the primary active app
+    active = crud.get_active_github_app_config(db)
+    if active and active.id == cfg.id:
+        github_app.reload_config(
+            app_id=cfg.app_id,
+            slug=cfg.slug,
+            private_key_pem=cfg.private_key_pem,
+            webhook_secret=cfg.webhook_secret,
+        )
+
+    return {
+        "id": cfg.id,
+        "name": cfg.name,
+        "app_id": cfg.app_id,
+        "slug": cfg.slug,
+        "private_key_configured": bool(cfg.private_key_pem),
+        "webhook_secret_configured": bool(cfg.webhook_secret),
+        "is_active": bool(cfg.is_active),
+    }
+
+
 @router.post("/integrations/github-app/config")
 async def save_github_app_config(
     app_id: Optional[str] = Form(None),

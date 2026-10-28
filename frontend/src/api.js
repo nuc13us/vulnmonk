@@ -663,6 +663,21 @@ export async function createGitHubAppConfig(formData) {
   return res.json();
 }
 
+export async function updateGitHubAppConfig(appConfigId, formData) {
+  // FormData upload — omit Content-Type so browser sets multipart boundary automatically
+  const token = getAuthToken();
+  const res = await apiFetch(`${API_BASE}/integrations/github-app/configs/${appConfigId}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to update GitHub App configuration");
+  }
+  return res.json();
+}
+
 export async function getProjectSlackNotify(projectId) {
   const res = await apiFetch(`${API_BASE}/projects/${projectId}/slack-notify`, {
     headers: getHeaders()

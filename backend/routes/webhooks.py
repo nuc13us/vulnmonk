@@ -10,6 +10,7 @@ Flow:
 
 import base64
 import json
+import logging
 import os
 import re
 import secrets
@@ -26,6 +27,62 @@ from .. import crud, models, schemas, auth, github_app
 from ..database import get_db, SessionLocal
 
 router = APIRouter()
+logger = logging.getLogger("vulnmonk")
+
+# ==================== PR SCAN JSON LOGGING ====================
+# PR scan findings are written as one JSON object per line to a log file
+# (default: <DATABASE_PATH dir>/logs/pr_scans.log, i.e. /data/logs/pr_scans.log
+# in Docker) ONLY - nothing is printed to stdout/docker logs. Override the file
+# with PR_SCAN_LOG_FILE.
+
+
+class _JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        from datetime import datetime, timezone
+        entry = {
+            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        entry.update(getattr(record, "fields", {}) or {})
+        return json.dumps(entry, default=str)
+
+
+def _pr_scan_log_path() -> str:
+    path = os.getenv("PR_SCAN_LOG_FILE", "").strip()
+    if path:
+        return path
+    db_path = os.getenv("DATABASE_PATH", "").strip()
+    base_dir = (os.path.dirname(os.path.abspath(db_path)) if db_path
+                else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+    return os.path.join(base_dir, "logs", "pr_scans.log")
+
+
+def _build_pr_scan_logger() -> logging.Logger:
+    from logging.handlers import RotatingFileHandler
+
+    pr_logger = logging.getLogger("vulnmonk.pr_scan")
+    if pr_logger.handlers:          # avoid duplicate handlers on reload
+        return pr_logger
+    pr_logger.setLevel(logging.INFO)
+    pr_logger.propagate = False      # file only: never reach stdout/stderr (docker logs)
+
+    log_path = _pr_scan_log_path()
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        file_handler = RotatingFileHandler(log_path, maxBytes=10 * 1024 * 1024,
+                                           backupCount=5, encoding="utf-8")
+        file_handler.setFormatter(_JsonFormatter())
+        pr_logger.addHandler(file_handler)
+    except OSError as exc:
+        # NullHandler stops Python's last-resort stderr handler from printing PR scan logs.
+        pr_logger.addHandler(logging.NullHandler())
+        logger.error("PR scan log file %s unavailable (%s); PR scan logs are disabled", log_path, exc)
+    return pr_logger
+
+
+pr_scan_logger = _build_pr_scan_logger()
 
 # ==================== SEVERITY HELPERS ====================
 
@@ -135,6 +192,28 @@ def _fetch_file_content(token: str, owner: str, repo: str,
         if r2.status_code == 200:
             return r2.content
     return None
+
+
+def _get_commit_author(token: str, owner: str, repo: str, sha: str) -> str:
+    """Return 'login (Name <email>)' for the author of a commit, or 'unknown'."""
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}",
+            headers=_github_headers(token),
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return "unknown"
+        data = resp.json()
+        login = (data.get("author") or {}).get("login", "")
+        git_author = (data.get("commit") or {}).get("author") or {}
+        name, email = git_author.get("name", ""), git_author.get("email", "")
+        details = f"{name} <{email}>" if email else name
+        if login and details:
+            return f"{login} ({details})"
+        return login or details or "unknown"
+    except Exception:
+        return "unknown"
 
 
 def _post_commit_status(token: str, owner: str, repo: str, sha: str,
@@ -247,7 +326,8 @@ def _run_pr_scan(pr_scan_id: int, project_id: int, pr_number: int,
                  project_include_yaml: str,
                  dashboard_url: str = "",
                  th_exclude_detectors: str = "",
-                 th_block_on: str = "none") -> None:
+                 th_block_on: str = "none",
+                 pr_author: str = "") -> None:
     """
     Background task: download changed files, scan with opengrep + trufflehog,
     filter findings to changed lines only, post commit status, update DB.
@@ -362,6 +442,43 @@ def _run_pr_scan(pr_scan_id: int, project_id: int, pr_number: int,
 
         _post_commit_status(access_token, owner, repo, head_sha,
                             gh_state, description, target_url=dashboard_url)
+
+        # ── Log issues found (secret values are never logged) ──────────────
+        if count or th_count:
+            commit_author = _get_commit_author(access_token, owner, repo, head_sha)
+            blob_base = f"https://github.com/{owner}/{repo}/blob/{head_sha}"
+            common = {
+                "repo": f"{owner}/{repo}",
+                "pr_number": pr_number,
+                "pr_author": pr_author or "unknown",
+                "commit": head_sha,
+                "commit_author": commit_author,
+                "github_state": gh_state,
+            }
+            for f in filtered:
+                path = f.get("path", "")
+                line = f.get("start", {}).get("line", 0)
+                pr_scan_logger.warning("PR scan issue", extra={"fields": {
+                    **common,
+                    "type": "sast",
+                    "rule": f.get("check_id", "unknown"),
+                    "severity": _normalize_severity(f.get("extra", {}).get("severity", "")),
+                    "file": path,
+                    "line": line,
+                    "url": f"{blob_base}/{path}#L{line}",
+                }})
+            for f in th_filtered:
+                path = f.get("_pr_file", "")
+                line = f.get("SourceMetadata", {}).get("Data", {}).get("Filesystem", {}).get("line", 0)
+                pr_scan_logger.warning("PR scan secret", extra={"fields": {
+                    **common,
+                    "type": "secret",
+                    "detector": f.get("DetectorName", "unknown"),
+                    "verified": bool(f.get("Verified", False)),
+                    "file": path,
+                    "line": line,
+                    "url": f"{blob_base}/{path}#L{line}",
+                }})
 
         # ── Slack notification for blocked PRs ─────────────────────────────
         if gh_state == "failure":
@@ -569,6 +686,7 @@ async def github_webhook(
         dashboard_url=dashboard_url,
         th_exclude_detectors=th_exclude_detectors,
         th_block_on=th_block_on or "none",
+        pr_author=(pr.get("user") or {}).get("login", ""),
     )
 
     return {"status": "queued", "pr_scan_id": pr_scan_record.id}

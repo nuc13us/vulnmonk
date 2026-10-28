@@ -13,7 +13,8 @@ import {
   getSlackConfig,
   saveSlackConfig,
   getGitHubAppConfigs,
-  createGitHubAppConfig
+  createGitHubAppConfig,
+  updateGitHubAppConfig
 } from "../api";
 
 function Integrations() {
@@ -51,6 +52,11 @@ function Integrations() {
   const [appPrivateKeyFile, setAppPrivateKeyFile] = useState(null);
   const [appWebhookSecret, setAppWebhookSecret] = useState("");
   const [savingGithubApp, setSavingGithubApp] = useState(false);
+  // When set, the app form edits this existing config instead of creating a new one
+  const [editingApp, setEditingApp] = useState(null);
+  const [appClearWebhookSecret, setAppClearWebhookSecret] = useState(false);
+  // Bumped on reset so the uncontrolled file input is cleared
+  const [appFormKey, setAppFormKey] = useState(0);
 
   const loadUser = useCallback(async () => {
     try {
@@ -413,6 +419,50 @@ function Integrations() {
     setAppSlug("");
     setAppPrivateKeyFile(null);
     setAppWebhookSecret("");
+    setAppClearWebhookSecret(false);
+    setEditingApp(null);
+    setAppFormKey(k => k + 1);
+  };
+
+  const handleOpenAddApp = () => {
+    resetAppForm();
+    setShowAppForm(true);
+  };
+
+  const handleStartEditApp = (app) => {
+    resetAppForm();
+    setEditingApp(app);
+    setAppName(app.name || "");
+    setAppId(app.app_id || "");
+    setAppSlug(app.slug || "");
+    setShowAppForm(true);
+  };
+
+  const handleUpdateGithubApp = async () => {
+    if (!isAdmin || !editingApp) return;
+    setSavingGithubApp(true);
+    try {
+      const formData = new FormData();
+      formData.append("name", appName.trim());
+      formData.append("app_id", appId.trim());
+      formData.append("slug", appSlug.trim());
+      // Blank secret/key keeps the existing stored value on the backend
+      if (appClearWebhookSecret) {
+        formData.append("clear_webhook_secret", "true");
+      } else if (appWebhookSecret.trim()) {
+        formData.append("webhook_secret", appWebhookSecret.trim());
+      }
+      if (appPrivateKeyFile) formData.append("private_key_file", appPrivateKeyFile);
+      const updatedApp = await updateGitHubAppConfig(editingApp.id, formData);
+      setGithubApps(existingApps => existingApps.map(a => (a.id === updatedApp.id ? updatedApp : a)));
+      resetAppForm();
+      setShowAppForm(false);
+      addLog("success", `GitHub App "${updatedApp.name || updatedApp.slug}" updated.`);
+    } catch (error) {
+      addLog("error", "Failed to update GitHub App: " + error.message);
+    } finally {
+      setSavingGithubApp(false);
+    }
   };
 
   const handleCreateGithubApp = async () => {
@@ -492,7 +542,7 @@ function Integrations() {
         <h2>GitHub Integrations</h2>
         <div style={{ display: "flex", gap: "8px" }}>
           {isAdmin && (
-            <button className="btn-primary github-connect-btn" onClick={() => setShowAppForm(true)}>
+            <button className="btn-primary github-connect-btn" onClick={handleOpenAddApp}>
               + Add GitHub App
             </button>
           )}
@@ -819,15 +869,23 @@ function Integrations() {
                 <button className="btn-primary" disabled={loading} onClick={() => handleInstallApp("Organization", app.id)}>🏢 Install Org</button>
                 <button className="btn-secondary-small" disabled={loading} onClick={() => handleInstallApp("", app.id)}>👤 Install Personal</button>
                 <button className="btn-secondary-small" disabled={loading} onClick={() => syncGitHubAppInstallations(app.id).then(loadIntegrations).catch(error => addLog("error", "Sync failed: " + error.message))}>↻ Sync</button>
+                <button className="btn-secondary-small" disabled={loading || savingGithubApp} onClick={() => handleStartEditApp(app)} title="Edit this GitHub App's settings">✏️ Edit</button>
               </div>
             </div>
           ))}
           {githubApps.length === 0 && <p className="no-data">No GitHub App configurations saved yet.</p>}
           {!showAppForm ? (
-            <button className="btn-secondary-small" onClick={() => setShowAppForm(true)}>+ Add GitHub App</button>
+            <button className="btn-secondary-small" onClick={handleOpenAddApp}>+ Add GitHub App</button>
           ) : (
-            <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid #e5e7eb" }}>
-              <h4 style={{ margin: "0 0 12px", fontSize: "0.9rem" }}>Add GitHub App</h4>
+            <div key={appFormKey} style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid #e5e7eb" }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: "0.9rem" }}>
+                {editingApp ? `Edit GitHub App: ${editingApp.name || editingApp.slug}` : "Add GitHub App"}
+              </h4>
+              {editingApp && (
+                <p style={{ margin: "0 0 12px", fontSize: "0.8rem", color: "#6b7280" }}>
+                  Leave the webhook secret or private key blank to keep the currently stored value.
+                </p>
+              )}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
                 <div>
                   <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>App Name</label>
@@ -843,13 +901,36 @@ function Integrations() {
                 </div>
                 <div>
                   <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>Webhook Secret</label>
-                  <input type="password" value={appWebhookSecret} onChange={e => setAppWebhookSecret(e.target.value)} style={{ width: "100%", padding: "8px 12px", border: "2px solid #e5e7eb", borderRadius: "6px", boxSizing: "border-box" }} />
+                  <input
+                    type="password"
+                    value={appWebhookSecret}
+                    onChange={e => setAppWebhookSecret(e.target.value)}
+                    disabled={appClearWebhookSecret}
+                    placeholder={editingApp ? (editingApp.webhook_secret_configured ? "•••••• (leave blank to keep current)" : "Not set — enter a secret to add one") : ""}
+                    style={{ width: "100%", padding: "8px 12px", border: "2px solid #e5e7eb", borderRadius: "6px", boxSizing: "border-box" }}
+                  />
+                  {editingApp && editingApp.webhook_secret_configured && (
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px", fontSize: "0.8rem", color: "#6b7280" }}>
+                      <input
+                        type="checkbox"
+                        checked={appClearWebhookSecret}
+                        onChange={e => { setAppClearWebhookSecret(e.target.checked); if (e.target.checked) setAppWebhookSecret(""); }}
+                      />
+                      Remove existing webhook secret
+                    </label>
+                  )}
                 </div>
               </div>
-              <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>Private Key (.pem file)</label>
+              <label style={{ display: "block", fontWeight: 600, fontSize: "0.88rem", marginBottom: "5px", color: "#374151" }}>
+                Private Key (.pem file){editingApp && <span style={{ fontWeight: 400, color: "#6b7280" }}> — optional, upload only to replace the current key</span>}
+              </label>
               <input type="file" accept=".pem,.key,text/plain" onChange={e => setAppPrivateKeyFile(e.target.files[0] || null)} />
               <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-                <button className="btn-primary" onClick={handleCreateGithubApp} disabled={savingGithubApp || !appId.trim() || !appSlug.trim() || !appPrivateKeyFile}>{savingGithubApp ? "Saving..." : "Save GitHub App"}</button>
+                {editingApp ? (
+                  <button className="btn-primary" onClick={handleUpdateGithubApp} disabled={savingGithubApp || !appId.trim() || !appSlug.trim()}>{savingGithubApp ? "Saving..." : "Update GitHub App"}</button>
+                ) : (
+                  <button className="btn-primary" onClick={handleCreateGithubApp} disabled={savingGithubApp || !appId.trim() || !appSlug.trim() || !appPrivateKeyFile}>{savingGithubApp ? "Saving..." : "Save GitHub App"}</button>
+                )}
                 <button className="btn-secondary-small" onClick={() => { resetAppForm(); setShowAppForm(false); }}>Cancel</button>
               </div>
             </div>
