@@ -367,6 +367,14 @@ def _run_pr_scan(pr_scan_id: int, project_id: int, pr_number: int,
             _post_commit_status(access_token, owner, repo, head_sha,
                                 "error", f"Scan error: {scan_result['error'][:100]}",
                                 target_url=dashboard_url)
+            pr_scan_logger.error("PR scan error", extra={"fields": {
+                "repo": f"{owner}/{repo}",
+                "pr_number": pr_number,
+                "pr_author": pr_author or "unknown",
+                "commit": head_sha,
+                "github_state": "error",
+                "error": str(scan_result["error"])[:500],
+            }})
             crud.update_pr_scan(db, pr_scan_id, "error", 0, scan_result)
             return
 
@@ -443,18 +451,25 @@ def _run_pr_scan(pr_scan_id: int, project_id: int, pr_number: int,
         _post_commit_status(access_token, owner, repo, head_sha,
                             gh_state, description, target_url=dashboard_url)
 
-        # ── Log issues found (secret values are never logged) ──────────────
+        # ── Log scan summary + issues found (secret values are never logged) ─
+        commit_author = _get_commit_author(access_token, owner, repo, head_sha)
+        blob_base = f"https://github.com/{owner}/{repo}/blob/{head_sha}"
+        common = {
+            "repo": f"{owner}/{repo}",
+            "pr_number": pr_number,
+            "pr_author": pr_author or "unknown",
+            "commit": head_sha,
+            "commit_author": commit_author,
+            "github_state": gh_state,
+        }
+        # One summary line for every PR scan, including clean ones
+        pr_scan_logger.info("PR scan completed", extra={"fields": {
+            **common,
+            "sast_issues": count,
+            "secrets": th_count,
+            "blocked": gh_state == "failure",
+        }})
         if count or th_count:
-            commit_author = _get_commit_author(access_token, owner, repo, head_sha)
-            blob_base = f"https://github.com/{owner}/{repo}/blob/{head_sha}"
-            common = {
-                "repo": f"{owner}/{repo}",
-                "pr_number": pr_number,
-                "pr_author": pr_author or "unknown",
-                "commit": head_sha,
-                "commit_author": commit_author,
-                "github_state": gh_state,
-            }
             for f in filtered:
                 path = f.get("path", "")
                 line = f.get("start", {}).get("line", 0)
@@ -505,6 +520,17 @@ def _run_pr_scan(pr_scan_id: int, project_id: int, pr_number: int,
         crud.update_pr_scan(db, pr_scan_id, scan_status, count, result_payload)
 
     except Exception as exc:
+        try:
+            pr_scan_logger.error("PR scan failed", extra={"fields": {
+                "repo": f"{owner}/{repo}",
+                "pr_number": pr_number,
+                "pr_author": pr_author or "unknown",
+                "commit": head_sha,
+                "github_state": "error",
+                "error": str(exc)[:500],
+            }})
+        except Exception:
+            pass
         try:
             _post_commit_status(access_token, owner, repo, head_sha,
                                 "error", f"VulnMonk internal error: {str(exc)[:80]}",
@@ -598,6 +624,13 @@ async def github_webhook(
     # ── Resolve project + scan settings ───────────────────────────────────
     project, block_on_severity, th_block_on = crud.get_project_and_severity_for_pr(db, repo_full_name)
     if not project:
+        pr_scan_logger.info("PR scan skipped", extra={"fields": {
+            "repo": repo_full_name,
+            "pr_number": payload.get("pull_request", {}).get("number"),
+            "pr_author": payload.get("pull_request", {}).get("user", {}).get("login", "unknown"),
+            "action": action,
+            "reason": "Repo not tracked or PR checks disabled",
+        }})
         return {"status": "ignored", "reason": "Repo not tracked or PR checks disabled"}
 
     # ── Get installation access token ──────────────────────────────────────
